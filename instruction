@@ -1,0 +1,12 @@
+ps -ef | grep tensorboard | awk '{print $2}' | xargs kill -9 
+nohup tensorboard --logdir /root/autodl-tmp/CounTR/lightning_logs --port 6006 &
+
+
+
+python -u finetune_FSC.py  --epochs 1000 --blr 2e-4 --weight_decay 0.05  
+
+
+
+python FSC_test_cross\(few-shot\).py --resume ckpt/checkpoint-666.pt
+
+python -u finetune_PL.py --epochs 1000 --blr 2e-4 --weight_decay 0.05 --lr 2e-4 --batch_size 8
