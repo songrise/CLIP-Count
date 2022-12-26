@@ -32,12 +32,13 @@ class FSC147(Dataset):
         """
         assert split in ['train', 'val', 'test']
 
-        self.data_dir = data_dir
-        self.im_dir = os.path.join(data_dir,'images_384_VarV2')
-        self.gt_dir = os.path.join(data_dir, 'gt_density_map_adaptive_384_VarV2')
-        self.anno_file = os.path.join(data_dir, 'annotation_FSC147_384.json')
-        self.data_split_file = os.path.join(data_dir, 'Train_Test_Val_FSC_147.json')
-        self.class_file = os.path.join(data_dir, 'ImageClasses_FSC147.txt')
+        #!HARDCODED Dec 25: 
+        self.data_dir = "../CounTR/data/"
+        self.im_dir = os.path.join(self.data_dir,'images_384_VarV2')
+        self.gt_dir = os.path.join(self.data_dir, 'gt_density_map_adaptive_384_VarV2')
+        self.anno_file = os.path.join(self.data_dir, 'annotation_FSC147_384.json')
+        self.data_split_file = os.path.join(self.data_dir, 'Train_Test_Val_FSC_147.json')
+        self.class_file = os.path.join(self.data_dir, 'ImageClasses_FSC147.txt')
         self.split = split
         with open(self.data_split_file) as f:
             data_split = json.load(f)
