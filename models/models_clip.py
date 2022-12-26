@@ -19,7 +19,8 @@ class CLIPCount(nn.Module):
                  embed_dim=768, encoder_depth=24, num_heads=16,
                  decoder_embed_dim=512, decoder_depth=2, decoder_num_heads=8,
                  mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False,
-                 learn_context:bool = False):
+                 use_vpt:bool = True, n_vpt:int = 4, use_coop:bool=True, 
+                 n_coop:int = 2):
         super().__init__()
 
         # --------------------------------------------------------------------------
@@ -33,19 +34,20 @@ class CLIPCount(nn.Module):
                                 std= (0.26862954, 0.26130258, 0.27577711)
                                 ) 
                             ])
-        
-        self.img_encoder = CLIPViT(self.clip)
-        self.text_encoder = CLIPTextTransformer(self.clip, learn_context)
+        self.n_vpt = n_vpt
+        self.n_coop = n_coop
+        self.img_encoder = CLIPViT(self.clip, use_vpt=use_vpt, n_vpt=n_vpt)
+        self.text_encoder = CLIPTextTransformer(self.clip, learn_context=use_vpt, n_ctx = n_coop)
         # --------------------------------------------------------------------------
 
         # --------------------------------------------------------------------------
         # MAE decoder specifics
-        self.decoder_embed = nn.Linear(embed_dim, decoder_embed_dim, bias=True)
+        self.decoder_linear = nn.Linear(embed_dim, decoder_embed_dim, bias=True)
 
-        self.decoder_proj = nn.Conv1d(50,49,1,1) #!HARDCODED Dec 26: for vit-32
+        # self.decoder_proj = nn.Conv1d(50,49,1,1) #!HARDCODED Dec 26: for vit-32
 
         #!HARDCODED Dec 26: for vit-32
-        self.decoder_pos_embed = nn.Parameter(torch.zeros(1, 50, decoder_embed_dim), requires_grad=False)  # fixed sin-cos embedding
+        self.decoder_pos_embed = nn.Parameter(torch.zeros(1, 49, decoder_embed_dim), requires_grad=False)  # fixed sin-cos embedding
         #TODO Dec 26: sincos pos embed
         # decoder_pos_embed = get_2d_sincos_pos_embed(self.decoder_pos_embed.shape[-1], int(50**.5), cls_token=False)
         # self.decoder_pos_embed.data.copy_(torch.from_numpy(decoder_pos_embed).float().unsqueeze(0))
@@ -111,26 +113,28 @@ class CLIPCount(nn.Module):
             x: latent code of query image 
             y_: the exemplar images
         """
-        # test text
+        # encode text
+
+        # embed tokens
+        x = self.decoder_linear(x)
+        x_patches = x[:,1+self.n_vpt:,:] #image patches
+        x_tokens = x[:,:1+self.n_vpt,:] # [CLS] token + learned context token
+    
+        # add pos embed
+        x = x_patches + self.decoder_pos_embed
+
+        #TODO Dec 27: refactor var name
         y_ = clip.tokenize(y_).to(x.device)
         y_ = self.text_encoder(y_).float()
 
-        # embed tokens
-        x = self.decoder_embed(x)
-        # add pos embed
-        x = x + self.decoder_pos_embed
-
-
-
-        # Exemplar encoder
-      
+        y_ = torch.concat([y_, x_tokens], dim=1)
         
         # apply Transformer blocks
         for blk in self.fim_blocks:
             x = blk(x, y_)
         x = self.decoder_norm(x)
-        x = self.decoder_proj(x)
         #! Dec 26: deal with the dimension of the CLIP ViT
+        # x = self.decoder_proj(x)
         # Density map regression
         n, hw, c = x.shape
         h = w = int(math.sqrt(hw))
@@ -151,16 +155,34 @@ class CLIPViT(nn.Module):
     """
     ViT encoder for CLIP
     """
-    def __init__(self, clip_model) -> None:
+    def __init__(self, clip_model, use_vpt:bool, n_vpt:int) -> None:
         super().__init__()
         self.clip_model = clip_model
         self.vit = clip_model.visual
+        self.visual_prompt = None
+        self.use_vpt = use_vpt
+        if use_vpt:
+            clip_embed_dim = 768 #!HARDCODED Dec 27: 
+            vpt = torch.empty((n_vpt, clip_embed_dim))
+            nn.init.normal_(vpt, std=0.5)
+            self.visual_prompt = nn.Parameter(vpt)
+
+
     
     def forward(self, image):
         x = self.vit.conv1(image)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
-        x = torch.cat([self.vit.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device), x], dim=1)  # shape = [*, grid ** 2 + 1, width]
+        if self.use_vpt:
+            vpts = einops.repeat(self.visual_prompt, 'n d -> b n d', b=x.shape[0])
+            x = torch.cat([self.vit.class_embedding.to(x.dtype) + \
+                            torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device), 
+                            vpts,
+                            x], dim=1)  # shape = [*, grid ** 2 + 1 + n_vpt, width]
+        else:
+            x = torch.cat([self.vit.class_embedding.to(x.dtype) + \
+                            torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device), 
+                            x], dim=1)  # shape = [*, grid ** 2 + 1, width]
         #! Dec 26: temp not use class embedding here
         # x = x + self.vit.positional_embedding.to(x.dtype)
         x = self.vit.ln_pre(x)
@@ -174,13 +196,13 @@ class CLIPTextTransformer(nn.Module):
     """
     Transfromer encoder (text) for CLIP
     """
-    def __init__(self, clip_model, learn_context) -> None:
+    def __init__(self, clip_model, learn_context:bool, n_ctx:int = 2) -> None:
         super().__init__()
         self.clip_model = clip_model
         self.learnable_context = None
         self.learn_context = learn_context #global context for all classes
         if learn_context:
-            self.n_ctx = 2
+            self.n_ctx = n_ctx
             context_vectors = torch.empty(self.n_ctx, self.clip_model.ln_final.weight.shape[0])
             torch.nn.init.normal_(context_vectors, std=.02)
             self.learnable_context = nn.Parameter(context_vectors) # [n_ctx, 512]

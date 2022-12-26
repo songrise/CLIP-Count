@@ -14,7 +14,6 @@
             "args": [
                 "--batch_size",
                 "2",
-                "--learn_prompt"
             ]
         }
     ]

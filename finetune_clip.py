@@ -38,6 +38,7 @@ os.environ["CUDA_LAUNCH_BLOCKING"] = '1'
 
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE pre-training', add_help=False)
+    parser.add_argument("--mode",type = str, default = "train", choices = ["train","test"], help = "train or test")
     parser.add_argument('--batch_size', default=26, type=int,
                         help='Batch size per GPU (effective batch size is batch_size * accum_iter * # gpus')
     parser.add_argument('--epochs', default=200, type=int)
@@ -101,9 +102,11 @@ def get_args_parser():
     parser.add_argument('--dist_url', default='env://',
                         help='url used to set up distributed training')
 
-    # tricks
-    parser.add_argument('--learn_prompt', action='store_true',
-                        help='whether to perform prompt learning.')
+    # prompt learning
+    parser.add_argument('--use_coop', type=bool, default=True,
+                        help='whether to perform context learning for text prompts.')
+    parser.add_argument('--use_vpt', type=bool, default=True,
+                        help='whether to perform visual prompt learning.')
     return parser
 
 
@@ -116,7 +119,7 @@ class Model(LightningModule):
             self.args = argparse.Namespace(**self.args)
 
         self.save_hyperparameters(args)
-        self.model = models_clip.CLIPCount(learn_context=self.args.learn_prompt)
+        self.model = models_clip.CLIPCount(use_coop=self.args.use_coop, use_vpt=self.args.use_vpt)
         self.loss = F.mse_loss
         # self.loss = FocalLoss()
         # self.loss = F.binary_cross_entropy
@@ -240,11 +243,26 @@ if __name__ == '__main__':
         pin_memory=args.pin_mem,
         drop_last=False,
     )
+
+    dataset_test = FSC147(args.data_path, split = "test")
+    sampler_test = torch.utils.data.SequentialSampler(dataset_test)
+    test_dataloader =  torch.utils.data.DataLoader(
+        dataset_test, sampler=sampler_test,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=args.pin_mem,
+        drop_last=False,
+    )
     #seed everything
 
     save_callback = pl.callbacks.ModelCheckpoint()
     model = Model(args)
     # model = Model.load_from_checkpoint("/root/autodl-tmp/CounTR/lightning_logs/version_1/checkpoints/epoch=8-step=324.ckpt")
     # prof = pl.profilers.AdvancedProfiler(dirpath = ".",filename="perf_logs")
-    trainer = Trainer(accelerator="gpu", log_every_n_steps=50, accumulate_grad_batches = 8, precision=16)#, profiler=prof,max_epochs=1)
-    trainer.fit(model, train_dataloader, val_dataloader)
+    trainer = Trainer(accelerator="gpu", log_every_n_steps=50, accumulate_grad_batches = 4, precision=16)#, profiler=prof,max_epochs=1)
+    if args.mode == "train":
+        trainer.fit(model, train_dataloader, val_dataloader)
+        #test
+        trainer.test(model, test_dataloaders=test_dataloader)
+    elif args.mode == "test":
+        trainer.test(model, test_dataloaders=test_dataloader)
