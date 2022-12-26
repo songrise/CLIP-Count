@@ -11,4 +11,4 @@ python FSC_test_cross\(few-shot\).py --resume ckpt/checkpoint-666.pt
 
 python -u finetune_PL.py --epochs 1000 --blr 2e-4 --weight_decay 0.05 --lr 2e-4 --batch_size 8
 
-python -u finetune_clip.py --epochs 50 --blr 2e-4 --weight_decay 0.05 --lr 1e-4 --batch_size 8
+python -u finetune_clip.py --epochs 50 --blr 2e-4 --weight_decay 0.05 --lr 1e-4 --batch_size 16 --learn_prompt

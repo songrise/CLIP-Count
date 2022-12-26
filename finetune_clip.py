@@ -101,6 +101,9 @@ def get_args_parser():
     parser.add_argument('--dist_url', default='env://',
                         help='url used to set up distributed training')
 
+    # tricks
+    parser.add_argument('--learn_prompt', action='store_true',
+                        help='whether to perform prompt learning.')
     return parser
 
 
@@ -113,7 +116,7 @@ class Model(LightningModule):
             self.args = argparse.Namespace(**self.args)
 
         self.save_hyperparameters(args)
-        self.model = models_clip.CLIPCount()
+        self.model = models_clip.CLIPCount(learn_context=self.args.learn_prompt)
         self.loss = F.mse_loss
         # self.loss = FocalLoss()
         # self.loss = F.binary_cross_entropy

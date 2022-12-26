@@ -3,6 +3,7 @@ ckpt/
 out/
 __pycache__/
 lightning_logs/
+debug/
 
 .Ds_Store
 *.pyc

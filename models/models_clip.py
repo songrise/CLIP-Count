@@ -18,7 +18,8 @@ class CLIPCount(nn.Module):
     def __init__(self, img_size=384, patch_size=16, in_chans=3,
                  embed_dim=768, encoder_depth=24, num_heads=16,
                  decoder_embed_dim=512, decoder_depth=2, decoder_num_heads=8,
-                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False):
+                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False,
+                 learn_context:bool = False):
         super().__init__()
 
         # --------------------------------------------------------------------------
@@ -34,8 +35,7 @@ class CLIPCount(nn.Module):
                             ])
         
         self.img_encoder = CLIPViT(self.clip)
-        self.text_encoder = CLIPTextTransformer(self.clip)
-        # self.text_encoder = 
+        self.text_encoder = CLIPTextTransformer(self.clip, learn_context)
         # --------------------------------------------------------------------------
 
         # --------------------------------------------------------------------------
@@ -53,33 +53,7 @@ class CLIPCount(nn.Module):
         self.shot_token = nn.Parameter(torch.zeros(512))
 
         # Exemplar encoder with CNN
-        exemplar_enc1 = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1),
-            nn.InstanceNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2) #[3,64,64]->[64,32,32]
-        )
-        exemplar_enc2 = nn.Sequential(
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
-            nn.InstanceNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2) #[64,32,32]->[128,16,16]
-        )
-        exemplar_enc3 = nn.Sequential(
-            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
-            nn.InstanceNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2) # [128,16,16]->[256,8,8]
-        )
-        exemplar_enc4 = nn.Sequential(
-            nn.Conv2d(256, decoder_embed_dim, kernel_size=3, stride=1, padding=1),
-            nn.InstanceNorm2d(512),
-            nn.ReLU(inplace=True),
-            nn.AdaptiveAvgPool2d((1,1))
-            # [256,8,8]->[512,1,1]
-        )
-
-        self.encoder_exemplar = nn.ModuleList([exemplar_enc1, exemplar_enc2, exemplar_enc3, exemplar_enc4])
+       
 
         #! Dec 24: this is Feature Interaction Module (FIM)
         self.fim_blocks = nn.ModuleList([
@@ -87,29 +61,8 @@ class CLIPCount(nn.Module):
             for i in range(decoder_depth)])
 
         self.decoder_norm = norm_layer(decoder_embed_dim)
-        # Density map regresssion module
-        self.decode_head0 = nn.Sequential(
-            nn.Conv2d(decoder_embed_dim, 256, kernel_size=3, stride=1, padding=1),
-            nn.GroupNorm(8, 256),
-            nn.ReLU(inplace=True)
-        )
-        self.decode_head1 = nn.Sequential(
-            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
-            nn.GroupNorm(8, 256),
-            nn.ReLU(inplace=True)
-        )
-        self.decode_head2 = nn.Sequential(
-            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
-            nn.GroupNorm(8, 256),
-            nn.ReLU(inplace=True)
-        )
-        self.decode_head3 = nn.Sequential(
-            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
-            nn.GroupNorm(8, 256),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(256, 1, kernel_size=1, stride=1)
-        )  
-    
+
+        self.decoder = Decoder(decoder_embed_dim, 384)
         # --------------------------------------------------------------------------
 
         self.norm_pix_loss = norm_pix_loss
@@ -182,20 +135,7 @@ class CLIPCount(nn.Module):
         n, hw, c = x.shape
         h = w = int(math.sqrt(hw))
         x = x.transpose(1, 2).reshape(n, c, h, w)
-
-        x = F.interpolate(
-                        self.decode_head0(x), size=x.shape[-1]*2, mode='bilinear', align_corners=False)
-        x = F.interpolate(
-                        self.decode_head1(x), size=x.shape[-1]*2, mode='bilinear', align_corners=False)
-        x = F.interpolate(
-                        self.decode_head2(x), size=x.shape[-1]*2, mode='bilinear', align_corners=False)
-        # x = F.interpolate(
-        #                 self.decode_head3(x), size=x.shape[-1]*2, mode='bilinear', align_corners=False)
-        #!HARDCODED Dec 26: directly upsample to 384x384
-        x = F.interpolate(
-                         self.decode_head3(x), size=384, mode='bilinear', align_corners=False)
-
-        x = einops.rearrange(x, 'n 1 h w -> n h w')
+        x = self.decoder(x)
         return x
 
     def forward(self, imgs, text, shot_num = 0):
@@ -234,12 +174,31 @@ class CLIPTextTransformer(nn.Module):
     """
     Transfromer encoder (text) for CLIP
     """
-    def __init__(self, clip_model) -> None:
+    def __init__(self, clip_model, learn_context) -> None:
         super().__init__()
         self.clip_model = clip_model
+        self.learnable_context = None
+        self.learn_context = learn_context #global context for all classes
+        if learn_context:
+            self.n_ctx = 2
+            context_vectors = torch.empty(self.n_ctx, self.clip_model.ln_final.weight.shape[0])
+            torch.nn.init.normal_(context_vectors, std=.02)
+            self.learnable_context = nn.Parameter(context_vectors) # [n_ctx, 512]
 
     def forward(self, text):
+        """
+        Input:
+            text: tokenized text, shape = [batch_size, n_ctx]
+        """
         x = self.clip_model.token_embedding(text).type(self.clip_model.dtype)  # [batch_size, n_ctx, d_model]
+        if self.learn_context:
+            sos_token = x[:, 0, :].unsqueeze(1)  # [batch_size, 1, d_model]
+            suffix_tokens = x[:, 1:-self.n_ctx, :] # class tokens + [EOS] token
+            ctx = einops.repeat(self.learnable_context, 'n d -> b n d', b=x.shape[0])
+            x = torch.cat([sos_token, ctx, suffix_tokens], dim=1)
+        
+
+
 
         x = x + self.clip_model.positional_embedding.type(self.clip_model.dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
@@ -253,6 +212,46 @@ class CLIPTextTransformer(nn.Module):
         x = x.unsqueeze(1)  # [batch_size, 1, transformer.width]
         return x
 
+class Decoder(nn.Module):
+    def __init__(self, in_dim:int, target_hw:int) -> None:
+        super().__init__()
+                # Density map regresssion module
+        self.decode_head0 = nn.Sequential(
+            nn.Conv2d(in_dim, 256, kernel_size=3, stride=1, padding=1),
+            nn.GroupNorm(8, 256),
+            nn.ReLU(inplace=True)
+        )
+        self.decode_head1 = nn.Sequential(
+            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
+            nn.GroupNorm(8, 256),
+            nn.ReLU(inplace=True)
+        )
+        self.decode_head2 = nn.Sequential(
+            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
+            nn.GroupNorm(8, 256),
+            nn.ReLU(inplace=True)
+        )
+        self.decode_head3 = nn.Sequential(
+            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
+            nn.GroupNorm(8, 256),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 1, kernel_size=1, stride=1)
+        )  
+
+    def forward(self, x):
+        #!HARDCODED Dec 26: directly upsample to 384x384
+        x = F.interpolate(
+                         self.decode_head0(x), size=x.shape[-1]*3, mode='bilinear', align_corners=False)
+        x = F.interpolate(
+                         self.decode_head1(x), size=x.shape[-1]*3, mode='bilinear', align_corners=False)
+        x = F.interpolate(
+                         self.decode_head2(x), size=x.shape[-1]*3, mode='bilinear', align_corners=False)
+        #!HARDCODED Dec 26: directly upsample to 384x384
+        x = F.interpolate(
+                         self.decode_head3(x), size=384, mode='bilinear', align_corners=False)
+
+        x = einops.rearrange(x, 'n 1 h w -> n h w')
+        return x
 
 def mae_vit_base_patch16_dec512d8b(**kwargs):
     model = CLIPCount(
