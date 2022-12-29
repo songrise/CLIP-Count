@@ -1,5 +1,5 @@
 ps -ef | grep tensorboard | awk '{print $2}' | xargs kill -9 
-nohup tensorboard --logdir /root/autodl-tmp/CLIPCount/lightning_logs --port 6006 &
+nohup tensorboard --logdir /root/autodl-tmp/CLIPCount/lightning_logs --port 6006  --samples_per_plugin images=100 &
 
 
 

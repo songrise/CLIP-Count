@@ -30,7 +30,8 @@ from models import models_mae_cross, models_clip
 import pytorch_lightning as pl
 from pytorch_lightning import LightningModule, Trainer, seed_everything
 from pytorch_lightning.lite import LightningLite
-
+import einops
+import cv2 
 
 
 os.environ["CUDA_LAUNCH_BLOCKING"] = '1'
@@ -39,6 +40,7 @@ os.environ["CUDA_LAUNCH_BLOCKING"] = '1'
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE pre-training', add_help=False)
     parser.add_argument("--mode",type = str, default = "train", choices = ["train","test"], help = "train or test")
+    parser.add_argument("--exp_name",type = str, default = "exp", help = "experiment name")
     parser.add_argument('--batch_size', default=26, type=int,
                         help='Batch size per GPU (effective batch size is batch_size * accum_iter * # gpus')
     parser.add_argument('--epochs', default=200, type=int)
@@ -103,9 +105,9 @@ def get_args_parser():
                         help='url used to set up distributed training')
 
     # prompt learning
-    parser.add_argument('--use_coop', type=bool, default=True,
+    parser.add_argument('--use_coop', action='store_true',
                         help='whether to perform context learning for text prompts.')
-    parser.add_argument('--use_vpt', type=bool, default=True,
+    parser.add_argument('--use_vpt', action='store_true',
                         help='whether to perform visual prompt learning.')
     return parser
 
@@ -129,13 +131,7 @@ class Model(LightningModule):
 
         samples, gt_density, boxes, m_flag, prompt = batch
         # If there is at least one image in the batch using Type 2 Mosaic, 0-shot is banned.
-        flag = 0
-        for i in range(m_flag.shape[0]):
-            flag += m_flag[i].item()
-        if flag == 0:
-            shot_num = random.randint(0,3)
-        else:
-            shot_num = random.randint(1,3)
+
 
         # output = self.model(samples,boxes,shot_num)
         output = self.model(samples, prompt)
@@ -146,14 +142,17 @@ class Model(LightningModule):
         masks = masks.reshape(output.shape[0], 384, 384)
         masks = torch.from_numpy(masks).to(self.device)
         #todo test focal loss
-        # output = F.sigmoid(output) #! Dec 24: add sigmoid to output here
         loss = self.loss(output, gt_density)
-        # loss = (loss * masks / (384*384)).sum() / output.shape[0]
+        sparsity_loss = -torch.log(torch.exp(-torch.abs(output))+torch.exp(-torch.abs(1.-output)))
+        sparsity_loss = torch.mean(sparsity_loss + 0.31326165795326233)
+        loss = loss 
+        loss = (loss * masks / (384*384)).sum() / output.shape[0]
         self.log('train_loss', loss)
 
         # Update information of MAE and RMSE
         batch_mae = 0
         batch_rmse = 0
+        #TODO Dec 27: parallelize this
         for i in range(output.shape[0]):
             pred_cnt = torch.sum(output[i]/60).item()
             gt_cnt = torch.sum(gt_density[i]/60).item()
@@ -172,16 +171,11 @@ class Model(LightningModule):
         # If there is at least one image in the batch using Type 2 Mosaic, 0-shot is banned.
         samples, gt_density, boxes, m_flag, prompt = batch
         # If there is at least one image in the batch using Type 2 Mosaic, 0-shot is banned.
-        flag = 0
-        for i in range(m_flag.shape[0]):
-            flag += m_flag[i].item()
-        if flag == 0:
-            shot_num = random.randint(0,3)
-        else:
-            shot_num = random.randint(1,3)
 
-        # output = self.model(samples,boxes,shot_num)
+
         output = self.model(samples, prompt)
+        # output = einops.rearrange(output, 'b h w -> b (h w)')
+        # gt_density = einops.rearrange(gt_density, 'b h w -> b (h w)')
         #! Dec 24: add sigmoid to output here
         # output = F.sigmoid(output)
 
@@ -200,6 +194,31 @@ class Model(LightningModule):
         batch_rmse = math.sqrt(batch_rmse)
         self.log('val_mae', batch_mae)
         self.log('val_rmse', batch_rmse)
+
+        #log the image
+        img_log = samples[0].detach().cpu().numpy()
+        pred_log = output[0].detach().cpu().numpy()
+        pred_log_rgb = cv2.applyColorMap(np.uint8(255*pred_log), cv2.COLORMAP_JET)
+        pred_log_rgb = np.transpose(pred_log_rgb, (2,0,1))
+        gt_log = gt_density[0].detach().cpu().numpy()
+        gt_log_rgb = cv2.applyColorMap(np.uint8(255*gt_log), cv2.COLORMAP_JET)
+        gt_log_rgb = np.transpose(gt_log_rgb, (2,0,1))
+
+
+        self.logger.experiment.add_image('val_img', img_log,  self.global_step)
+        self.logger.experiment.add_image('density_pred', pred_log_rgb,  self.global_step)
+        self.logger.experiment.add_image('density_gt', gt_log_rgb,  self.global_step)
+        # log the heatmap
+        pred_log = einops.repeat(pred_log, 'h w -> c h w', c=3)
+        pred_log = pred_log / pred_log.max()
+        heatmap = 0.33 * img_log + 0.67 * pred_log
+        self.logger.experiment.add_image('overlay_pred', heatmap,  self.global_step)
+        gt_log = einops.repeat(gt_log, 'h w -> c h w', c=3)
+        heatmap = 0.33 * img_log + 0.67 * gt_log
+        self.logger.experiment.add_image('overlay_gt', heatmap,  self.global_step)
+
+        #log the text prompt
+        self.logger.experiment.add_text('prompt', prompt[0],  self.global_step)
         # self.print('val_mae = ', batch_mae)
         # self.print('val_rmse = ', batch_rmse)
         return batch_mae, batch_rmse
@@ -211,7 +230,9 @@ class Model(LightningModule):
             lr=self.args.lr,
             betas=(0.9, 0.95)
         )
-        return optimizer
+
+        schedular = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=5)
+        return {"optimizer": optimizer, "lr_scheduler": schedular, "monitor": "val_mae"}
 
   
 
@@ -223,7 +244,7 @@ if __name__ == '__main__':
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     
 
-    dataset_train = FSC147(args.data_path, split = "train")
+    dataset_train = FSC147(args.data_path, split = "train", subset_scale=0.33)
     sampler_train = torch.utils.data.RandomSampler(dataset_train)
 
     train_dataloader = torch.utils.data.DataLoader(
@@ -257,12 +278,21 @@ if __name__ == '__main__':
 
     save_callback = pl.callbacks.ModelCheckpoint()
     model = Model(args)
-    # model = Model.load_from_checkpoint("/root/autodl-tmp/CounTR/lightning_logs/version_1/checkpoints/epoch=8-step=324.ckpt")
+    # model = Model.load_from_checkpoint("/root/autodl-tmp/CLIPCount/lightning_logs/vitB16base/version_0/checkpoints/epoch=29-step=6870.ckpt")
     # prof = pl.profilers.AdvancedProfiler(dirpath = ".",filename="perf_logs")
-    trainer = Trainer(accelerator="gpu", log_every_n_steps=50, accumulate_grad_batches = 4, precision=16)#, profiler=prof,max_epochs=1)
+    logger = pl.loggers.TensorBoardLogger("lightning_logs", name=args.exp_name)
+    trainer = Trainer(
+        accelerator="gpu", 
+        # log_every_n_steps=50, 
+        accumulate_grad_batches = 1, 
+        precision=16, 
+        max_epochs=args.epochs,
+        logger=logger,
+        check_val_every_n_epoch=3
+    )#, profiler=prof,max_epochs=1)
     if args.mode == "train":
-        trainer.fit(model, train_dataloader, val_dataloader)
+        trainer.fit(model, train_dataloader, train_dataloader) #!HARDCODED Dec 28: 
         #test
-        trainer.test(model, test_dataloaders=test_dataloader)
+        trainer.test(model, test_dataloader)
     elif args.mode == "test":
-        trainer.test(model, test_dataloaders=test_dataloader)
+        trainer.test(model, test_dataloader)

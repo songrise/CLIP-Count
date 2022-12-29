@@ -14,6 +14,8 @@
             "args": [
                 "--batch_size",
                 "2",
+                "--use_coop",
+                "--use_vpt"
             ]
         }
     ]

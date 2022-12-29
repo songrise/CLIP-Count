@@ -47,7 +47,8 @@ class FSC147(Dataset):
             self.annotations = json.load(f)
 
         self.idx_running_set = data_split[split]
-
+        # subsample the dataset
+        self.idx_running_set = self.idx_running_set[:int(subset_scale*len(self.idx_running_set))]
 
         self.class_dict = {}
         with open(self.class_file) as f:
@@ -136,7 +137,7 @@ class FSC147(Dataset):
                 gt_map[min(new_H-1,int(dots[i][1]))][min(new_W-1,int(dots[i][0]*scale_factor))]=1
             gt_map = ndimage.gaussian_filter(gt_map, sigma=(1, 1), order=0)
             gt_map = torch.from_numpy(gt_map)
-            gt_map = gt_map *60
+            gt_map = gt_map * 60
             
             sample = {'image':image,'dots':dots, 'boxes':boxes, 'pos':rects, 'gt_map':gt_map}
             return sample['image'].float(), sample['dots'], sample['boxes'], sample['pos'] ,sample['gt_map']

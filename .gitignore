@@ -21,3 +21,5 @@ debug/
 *.tar.gz
 *.zip
 *.pth
+
+nohup.out
