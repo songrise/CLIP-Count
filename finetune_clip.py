@@ -17,7 +17,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import Dataset
 import torch.nn.functional as F
 import torchvision
-
+from typing import Optional, List, Dict, Any, Union, Tuple
 import timm
 
 import timm.optim.optim_factory as optim_factory
@@ -109,16 +109,20 @@ def get_args_parser():
                         help='whether to perform context learning for text prompts.')
     parser.add_argument('--use_vpt', action='store_true',
                         help='whether to perform visual prompt learning.')
+
+    #loss relate
+    parser.add_argument("--use_contrast", action='store_true', help = "whether to use contrasitive loss")
     return parser
 
 
 class Model(LightningModule):
-    def __init__(self, args):
+    def __init__(self, args, all_classes:List[str] = None):
         super().__init__()
         self.args = args
         # if args is a dictionary, convert to Namespace
         if self.args is not None and type(self.args) is dict:
             self.args = argparse.Namespace(**self.args)
+        self.all_classes = all_classes
 
         self.save_hyperparameters(args)
         self.model = models_clip.CLIPCount(use_coop=self.args.use_coop, use_vpt=self.args.use_vpt)
@@ -129,13 +133,9 @@ class Model(LightningModule):
     def training_step(self, batch, batch_idx):
 
 
-        samples, gt_density, boxes, m_flag, prompt = batch
-        # If there is at least one image in the batch using Type 2 Mosaic, 0-shot is banned.
+        samples, gt_density, boxes, m_flag, prompt_gt = batch
 
-
-        # output = self.model(samples,boxes,shot_num)
-        output = self.model(samples, prompt)
-
+        output = self.model(samples, prompt_gt)
         # Compute loss function
         mask = np.random.binomial(n=1, p=0.8, size=[384,384])
         masks = np.tile(mask,(output.shape[0],1))
@@ -143,27 +143,40 @@ class Model(LightningModule):
         masks = torch.from_numpy(masks).to(self.device)
         #todo test focal loss
         loss = self.loss(output, gt_density)
-        sparsity_loss = -torch.log(torch.exp(-torch.abs(output))+torch.exp(-torch.abs(1.-output)))
-        sparsity_loss = torch.mean(sparsity_loss + 0.31326165795326233)
-        loss = loss 
+        # loss for negative prompt
+
+        # todo the loss should take the number into account otherwise easy for degenerated sol
         loss = (loss * masks / (384*384)).sum() / output.shape[0]
+        if self.args.use_contrast:
+            prompt_neg = self.gen_negative_prompt(prompt_gt)
+            output_neg = self.model(samples, prompt_neg)
+            neg_density = torch.zeros_like(gt_density) # for negative prompt, density is all zero
+            loss_neg = self.loss(output_neg, neg_density)
+            loss = loss + loss_neg * 0.5
+        # if args.use_sparsity:
+            # sparsity_loss = -torch.log(torch.exp(-torch.abs(output))+torch.exp(-torch.abs(1.-output)))
+            # sparsity_loss = torch.mean(sparsity_loss + 0.31326165795326233)
         self.log('train_loss', loss)
 
         # Update information of MAE and RMSE
         batch_mae = 0
         batch_rmse = 0
+        gt_sum = 0
         #TODO Dec 27: parallelize this
         for i in range(output.shape[0]):
             pred_cnt = torch.sum(output[i]/60).item()
             gt_cnt = torch.sum(gt_density[i]/60).item()
             cnt_err = abs(pred_cnt - gt_cnt)
+            gt_sum += gt_cnt
             batch_mae += cnt_err
             batch_rmse += cnt_err ** 2
         batch_mae /= output.shape[0]
         batch_rmse /= output.shape[0]
         batch_rmse = math.sqrt(batch_rmse)
+        # loss = loss / gt_sum
         self.log('train_mae', batch_mae)
         self.log('train_rmse', batch_rmse)
+    
     
         return loss
     
@@ -183,46 +196,62 @@ class Model(LightningModule):
         # Update information of MAE and RMSE
         batch_mae = 0
         batch_rmse = 0
+        pred_cnts = []
+        gt_cnts = []
         for i in range(output.shape[0]):
             pred_cnt = torch.sum(output[i]/60).item()
             gt_cnt = torch.sum(gt_density[i]/60).item()
             cnt_err = abs(pred_cnt - gt_cnt)
             batch_mae += cnt_err
             batch_rmse += cnt_err ** 2
+            pred_cnts.append(pred_cnt)
+            gt_cnts.append(gt_cnt)
         batch_mae /= output.shape[0]
         batch_rmse /= output.shape[0]
         batch_rmse = math.sqrt(batch_rmse)
-        self.log('val_mae', batch_mae)
-        self.log('val_rmse', batch_rmse)
 
         #log the image
         img_log = samples[0].detach().cpu().numpy()
-        pred_log = output[0].detach().cpu().numpy()
-        pred_log_rgb = cv2.applyColorMap(np.uint8(255*pred_log), cv2.COLORMAP_JET)
+        pred_density = output[0].detach().cpu().numpy()
+        pred_log_rgb = cv2.applyColorMap(np.uint8(255*pred_density), cv2.COLORMAP_JET)
         pred_log_rgb = np.transpose(pred_log_rgb, (2,0,1))
-        gt_log = gt_density[0].detach().cpu().numpy()
-        gt_log_rgb = cv2.applyColorMap(np.uint8(255*gt_log), cv2.COLORMAP_JET)
+        gt_density_log = gt_density[0].detach().cpu().numpy()
+        gt_log_rgb = cv2.applyColorMap(np.uint8(255*gt_density_log), cv2.COLORMAP_JET)
         gt_log_rgb = np.transpose(gt_log_rgb, (2,0,1))
 
 
-        self.logger.experiment.add_image('val_img', img_log,  self.global_step)
-        self.logger.experiment.add_image('density_pred', pred_log_rgb,  self.global_step)
-        self.logger.experiment.add_image('density_gt', gt_log_rgb,  self.global_step)
-        # log the heatmap
-        pred_log = einops.repeat(pred_log, 'h w -> c h w', c=3)
-        pred_log = pred_log / pred_log.max()
-        heatmap = 0.33 * img_log + 0.67 * pred_log
-        self.logger.experiment.add_image('overlay_pred', heatmap,  self.global_step)
-        gt_log = einops.repeat(gt_log, 'h w -> c h w', c=3)
-        heatmap = 0.33 * img_log + 0.67 * gt_log
-        self.logger.experiment.add_image('overlay_gt', heatmap,  self.global_step)
+        pred_density = einops.repeat(pred_density, 'h w -> c h w', c=3)
+        pred_density = pred_density / pred_density.max() #normalize
+        heatmap_pred = 0.33 * img_log + 0.67 * pred_density
+        gt_density_log = einops.repeat(gt_density_log, 'h w -> c h w', c=3)
+        heatmap_gt = 0.33 * img_log + 0.67 * gt_density_log
 
-        #log the text prompt
-        self.logger.experiment.add_text('prompt', prompt[0],  self.global_step)
-        # self.print('val_mae = ', batch_mae)
-        # self.print('val_rmse = ', batch_rmse)
-        return batch_mae, batch_rmse
-        
+        return {"mae": batch_mae, "rmse": batch_rmse, "img": img_log, "pred": pred_log_rgb, "gt": gt_log_rgb, "heatmap_pred": heatmap_pred, "heatmap_gt": heatmap_gt, "prompt": prompt[0], "pred_cnts": pred_cnts, "gt_cnts": gt_cnts}
+    
+    def validation_epoch_end(self, outputs):
+        avg_mae = np.mean([x['mae'] for x in outputs])
+        avg_rmse = np.mean([x['rmse'] for x in outputs])
+        self.log('val_mae', avg_mae)
+        self.log('val_rmse', avg_rmse)
+
+        # log the image
+        idx = random.randint(0, len(outputs)-1)
+        img = outputs[idx]["img"]
+        pred = outputs[idx]["pred"]
+        gt = outputs[idx]["gt"]
+        heatmap_pred = outputs[idx]["heatmap_pred"]
+        heatmap_gt = outputs[idx]["heatmap_gt"]
+        prompt = outputs[idx]["prompt"]
+        pred_cnts = outputs[idx]["pred_cnts"]
+        gt_cnts = outputs[idx]["gt_cnts"]
+        pred_gt = "pred: {:.2f} gt: {:.2f}".format(pred_cnts[0], gt_cnts[0])
+        self.logger.experiment.add_image("val_img", img, self.current_epoch)
+        self.logger.experiment.add_image("density_pred", pred, self.current_epoch)
+        self.logger.experiment.add_image("density_gt", gt, self.current_epoch)
+        self.logger.experiment.add_image("overlay_pred", heatmap_pred, self.current_epoch)
+        self.logger.experiment.add_image("overlay_gt", heatmap_gt, self.current_epoch)
+        self.logger.experiment.add_text("prompt", prompt, self.current_epoch)
+        self.logger.experiment.add_text("count", pred_gt, self.current_epoch)
     
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
@@ -231,9 +260,18 @@ class Model(LightningModule):
             betas=(0.9, 0.95)
         )
 
-        schedular = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=5)
+        # schedular = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=5)
+        schedular = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
         return {"optimizer": optimizer, "lr_scheduler": schedular, "monitor": "val_mae"}
 
+    def gen_negative_prompt(self,prompt_gt:List[str]):
+        prompts = []
+        for i in range(len(prompt_gt)):
+            neg_prompt = prompt_gt[i]
+            while neg_prompt == prompt_gt[i]:
+                neg_prompt = random.choice(self.all_classes)
+            prompts.append(neg_prompt)
+        return prompts
   
 
 if __name__ == '__main__':
@@ -244,7 +282,8 @@ if __name__ == '__main__':
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     
 
-    dataset_train = FSC147(args.data_path, split = "train", subset_scale=0.33)
+    dataset_train = FSC147(args.data_path, split = "train", subset_scale=1)
+    all_classes_train = dataset_train.all_classes
     sampler_train = torch.utils.data.RandomSampler(dataset_train)
 
     train_dataloader = torch.utils.data.DataLoader(
@@ -277,7 +316,7 @@ if __name__ == '__main__':
     #seed everything
 
     save_callback = pl.callbacks.ModelCheckpoint()
-    model = Model(args)
+    model = Model(args,all_classes=all_classes_train)
     # model = Model.load_from_checkpoint("/root/autodl-tmp/CLIPCount/lightning_logs/vitB16base/version_0/checkpoints/epoch=29-step=6870.ckpt")
     # prof = pl.profilers.AdvancedProfiler(dirpath = ".",filename="perf_logs")
     logger = pl.loggers.TensorBoardLogger("lightning_logs", name=args.exp_name)
@@ -291,7 +330,10 @@ if __name__ == '__main__':
         check_val_every_n_epoch=3
     )#, profiler=prof,max_epochs=1)
     if args.mode == "train":
-        trainer.fit(model, train_dataloader, train_dataloader) #!HARDCODED Dec 28: 
+        #overfit
+        # trainer.fit(model, train_dataloader, train_dataloader) #!HARDCODED Dec 28: 
+        #normal
+        trainer.fit(model, train_dataloader, val_dataloader)
         #test
         trainer.test(model, test_dataloader)
     elif args.mode == "test":

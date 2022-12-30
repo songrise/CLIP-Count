@@ -34,11 +34,12 @@ class FSC147(Dataset):
 
         #!HARDCODED Dec 25: 
         self.data_dir = "../CounTR/data/"
+        self.dataset_type = "FSC133"
         self.im_dir = os.path.join(self.data_dir,'images_384_VarV2')
         self.gt_dir = os.path.join(self.data_dir, 'gt_density_map_adaptive_384_VarV2')
-        self.anno_file = os.path.join(self.data_dir, 'annotation_FSC147_384.json')
-        self.data_split_file = os.path.join(self.data_dir, 'Train_Test_Val_FSC_147.json')
-        self.class_file = os.path.join(self.data_dir, 'ImageClasses_FSC147.txt')
+        self.anno_file = os.path.join(self.data_dir,self.dataset_type , f'annotation_{self.dataset_type}_384.json')
+        self.data_split_file = os.path.join(self.data_dir,self.dataset_type ,f'Train_Test_Val_{self.dataset_type}.json')
+        self.class_file = os.path.join(self.data_dir, self.dataset_type ,f'ImageClasses_{self.dataset_type}.txt')
         self.split = split
         with open(self.data_split_file) as f:
             data_split = json.load(f)
@@ -58,7 +59,7 @@ class FSC147(Dataset):
                 # concat word as string
                 val = ' '.join(val)
                 self.class_dict[key] = val
-        
+        self.all_classes = list(set(self.class_dict.values()))
         self.transform = None
         if self.split == 'train' or self.split == 'val':
             self.transform = transforms.Compose([ResizeTrainImage(MAX_HW, self)])
@@ -197,7 +198,7 @@ class ResizeTrainImage(object):
     def __init__(self, MAX_HW=384, dataset:FSC147=None):
         self.max_hw = MAX_HW
         self.dataset = dataset
-
+        self.use_out_mosaic = True
     def __call__(self, sample):
         image, lines_boxes, density, dots, im_id, m_flag = sample['image'], sample['lines_boxes'],sample['gt_density'], sample['dots'], sample['id'], sample['m_flag']
         
@@ -265,6 +266,11 @@ class ResizeTrainImage(object):
                 re_image = TF.hflip(re_image)
                 resized_density = TF.hflip(resized_density)
         
+        #Random luminance
+        if aug_flag == 1:
+            re_image = TF.adjust_brightness(re_image, random.uniform(0.8, 1.2))
+
+        
         # Random 384*384 crop in a new_W*384 image and 384*new_W density map
         if mosaic_flag == 0:
             if aug_flag == 0:
@@ -283,7 +289,7 @@ class ResizeTrainImage(object):
             map_array = []
             blending_l = random.randint(10, 20)
             resize_l = 192 + 2 * blending_l
-            if dots.shape[0] >= 70:
+            if dots.shape[0] >= 70 or not self.use_out_mosaic: #! Dec 29: ??
                 for i in range(4):
                     length =  random.randint(150, 384)
                     start_W = random.randint(0, new_W-length)
@@ -297,7 +303,7 @@ class ResizeTrainImage(object):
                     reresized_density1 = torch.from_numpy(reresized_density1)
                     image_array.append(reresized_image1)
                     map_array.append(reresized_density1)
-            else:
+            elif self.use_out_mosaic: #! Dec 29: else mosaic with other classes?
                 m_flag = 1
                 prob = random.random()
                 if prob > 0.25:
