@@ -103,10 +103,10 @@ class CLIPCount(nn.Module):
         """
         # embed patches
         x = self.preprocess(x)
-        cls_token, x = self.img_encoder(x)
-        return cls_token, x
+        img_patches, cls_token, x = self.img_encoder(x)
+        return img_patches, cls_token, x
 
-    def forward_decoder(self, patch_feature, text, cls_token):
+    def forward_decoder(self, patch_feature, text, cls_token, img_patches):
         """
         input:
             x: feature map of the patches of the image
@@ -115,8 +115,9 @@ class CLIPCount(nn.Module):
         # encode text
 
         # embed tokens
-        x = self.decoder_linear(patch_feature)
-        x_patches = x[:,1+self.n_vpt:,:] #image patches
+        x = self.decoder_linear(img_patches)
+        # x_patches = x[:,1+self.n_vpt:,:] #image patches
+        x_patches = x
         #TODO Dec 28: handle cls token for use vpt
         # x_tokens = x[:,:1+self.n_vpt,:] # [CLS] token + learned context token
         # x_cls = cls_token / cls_token.norm(dim=-1, keepdim=True)ß
@@ -135,7 +136,7 @@ class CLIPCount(nn.Module):
         # y_ = y_ / y_.norm(dim=-1, keepdim=True)
 
         if not self.proj_feat:
-            y_ = torch.concat([y_, x_cls,torch.mul(y_, x_cls)], dim=1) # element-wise multiplication (ZegCLIP)
+            y_ = torch.concat([y_, x_cls, torch.mul(y_, x_cls)], dim=1) # element-wise multiplication (ZegCLIP)
           
         # apply Transformer blocks (cross-attention)
         x = self.decoder_norm_pre(x)
@@ -157,8 +158,8 @@ class CLIPCount(nn.Module):
         #! Dec 24: ViT encoder is not trained in finetune stage
         # with torch.no_grad():
         #     latent = self.forward_encoder(imgs)
-        cls_token, patch_feat = self.forward_encoder(imgs)
-        pred = self.forward_decoder(patch_feat, text, cls_token)  # [N, 384, 384]
+        img_patches, cls_token, patch_feat = self.forward_encoder(imgs)
+        pred = self.forward_decoder(patch_feat, text, cls_token, img_patches)  # [N, 384, 384]
         return pred
 
 
@@ -184,6 +185,7 @@ class CLIPViT(nn.Module):
         x = self.vit.conv1(image)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
+        img_patches = x
         
         if self.use_vpt:
             vpts = einops.repeat(self.visual_prompt, 'n d -> b n d', b=x.shape[0])
@@ -206,7 +208,7 @@ class CLIPViT(nn.Module):
         x_cls = x[:, :1, :]  # [CLS] token
         x_cls = self.vit.ln_post(x_cls)
         x_cls = x_cls @ self.vit.proj
-        return x_cls, x
+        return img_patches, x_cls, x
     
 class CLIPTextTransformer(nn.Module):
     """

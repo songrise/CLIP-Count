@@ -64,8 +64,7 @@ def get_args_parser():
 
     parser.add_argument('--lr', type=float, default=1.0, metavar='LR',
                         help='learning rate (absolute lr)')
-    parser.add_argument('--blr', type=float, default=1e-3, metavar='LR',
-                        help='base learning rate: absolute_lr = base_lr * total_batch_size / 256')
+
     parser.add_argument('--min_lr', type=float, default=0., metavar='LR',
                         help='lower lr bound for cyclic schedulers that hit 0')
 
@@ -85,8 +84,8 @@ def get_args_parser():
     parser.add_argument('--seed', default=0, type=int)
     #parser.add_argument('--resume', default='./output_pre_4_dir/checkpoint-300.pth',
     #                    help='resume from checkpoint')
-    parser.add_argument('--resume', default=None,
-                        help='resume from checkpoint')
+    parser.add_argument('--ckpt', default=None, type = str,
+                        help='path of resume from checkpoint')
 
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
@@ -253,6 +252,58 @@ class Model(LightningModule):
         self.logger.experiment.add_text("prompt", prompt, self.current_epoch)
         self.logger.experiment.add_text("count", pred_gt, self.current_epoch)
     
+    def test_step(self, batch, batch_idx):
+                # If there is at least one image in the batch using Type 2 Mosaic, 0-shot is banned.
+        samples, gt_density, boxes, m_flag, prompt = batch
+        # If there is at least one image in the batch using Type 2 Mosaic, 0-shot is banned.
+
+
+        output = self.model(samples, prompt)
+        # output = einops.rearrange(output, 'b h w -> b (h w)')
+        # gt_density = einops.rearrange(gt_density, 'b h w -> b (h w)')
+        #! Dec 24: add sigmoid to output here
+        # output = F.sigmoid(output)
+
+        
+        # Update information of MAE and RMSE
+        batch_mae = 0
+        batch_rmse = 0
+        pred_cnts = []
+        gt_cnts = []
+        for i in range(output.shape[0]):
+            pred_cnt = torch.sum(output[i]/60).item()
+            gt_cnt = torch.sum(gt_density[i]/60).item()
+            cnt_err = abs(pred_cnt - gt_cnt)
+            batch_mae += cnt_err
+            batch_rmse += cnt_err ** 2
+            pred_cnts.append(pred_cnt)
+            gt_cnts.append(gt_cnt)
+        batch_mae /= output.shape[0]
+        batch_rmse /= output.shape[0]
+        batch_rmse = math.sqrt(batch_rmse)
+
+        #log the image
+        img_log = samples[0].detach().cpu().numpy()
+        pred_density = output[0].detach().cpu().numpy()
+        pred_log_rgb = cv2.applyColorMap(np.uint8(255*pred_density), cv2.COLORMAP_JET)
+        pred_log_rgb = np.transpose(pred_log_rgb, (2,0,1))
+        gt_density_log = gt_density[0].detach().cpu().numpy()
+        gt_log_rgb = cv2.applyColorMap(np.uint8(255*gt_density_log), cv2.COLORMAP_JET)
+        gt_log_rgb = np.transpose(gt_log_rgb, (2,0,1))
+
+
+        pred_density = einops.repeat(pred_density, 'h w -> c h w', c=3)
+        pred_density = pred_density / pred_density.max() #normalize
+        heatmap_pred = 0.33 * img_log + 0.67 * pred_density
+        gt_density_log = einops.repeat(gt_density_log, 'h w -> c h w', c=3)
+        heatmap_gt = 0.33 * img_log + 0.67 * gt_density_log
+
+        self.log('test_mae', batch_mae)
+        self.log('test_rmse', batch_rmse)
+
+        return {"mae": batch_mae, "rmse": batch_rmse, "img": img_log, "pred": pred_log_rgb, "gt": gt_log_rgb, "heatmap_pred": heatmap_pred, "heatmap_gt": heatmap_gt, "prompt": prompt[0], "pred_cnts": pred_cnts, "gt_cnts": gt_cnts}
+    
+
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             self.model.parameters(),
@@ -315,14 +366,15 @@ if __name__ == '__main__':
     )
     #seed everything
 
-    save_callback = pl.callbacks.ModelCheckpoint()
+    save_callback = pl.callbacks.ModelCheckpoint(monitor='val_mae', save_top_k=1, mode='min')
     model = Model(args,all_classes=all_classes_train)
-    # model = Model.load_from_checkpoint("/root/autodl-tmp/CLIPCount/lightning_logs/vitB16base/version_0/checkpoints/epoch=29-step=6870.ckpt")
+    model = Model.load_from_checkpoint("/root/autodl-tmp/CLIPCount/lightning_logs/vitB16enc/version_0/checkpoints/epoch=197-step=45342.ckpt")
     # prof = pl.profilers.AdvancedProfiler(dirpath = ".",filename="perf_logs")
     logger = pl.loggers.TensorBoardLogger("lightning_logs", name=args.exp_name)
     trainer = Trainer(
         accelerator="gpu", 
         # log_every_n_steps=50, 
+        callbacks=[save_callback],
         accumulate_grad_batches = 1, 
         precision=16, 
         max_epochs=args.epochs,
@@ -337,4 +389,4 @@ if __name__ == '__main__':
         #test
         trainer.test(model, test_dataloader)
     elif args.mode == "test":
-        trainer.test(model, test_dataloader)
+        trainer.test(model, val_dataloader)
