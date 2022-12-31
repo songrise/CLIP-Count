@@ -34,7 +34,7 @@ class FSC147(Dataset):
 
         #!HARDCODED Dec 25: 
         self.data_dir = "../CounTR/data/"
-        self.dataset_type = "FSC133"
+        self.dataset_type = "FSC147"
         self.im_dir = os.path.join(self.data_dir,'images_384_VarV2')
         self.gt_dir = os.path.join(self.data_dir, 'gt_density_map_adaptive_384_VarV2')
         self.anno_file = os.path.join(self.data_dir,self.dataset_type , f'annotation_{self.dataset_type}_384.json')
@@ -62,8 +62,8 @@ class FSC147(Dataset):
         self.all_classes = list(set(self.class_dict.values()))
         self.transform = None
         if self.split == 'train' or self.split == 'val':
-            self.transform = transforms.Compose([ResizeTrainImage(MAX_HW, self)])
-
+            use_aug = self.split == 'train'
+            self.transform = transforms.Compose([ResizeTrainImage(MAX_HW, self, aug=use_aug)])
         random.shuffle(self.idx_running_set)
 
     def __len__(self):
@@ -195,10 +195,11 @@ class ResizeTrainImage(object):
     Augmentation including Gaussian noise, Color jitter, Gaussian blur, Random affine, Random horizontal flip and Mosaic (or Random Crop if no Mosaic) is used.
     """
     
-    def __init__(self, MAX_HW=384, dataset:FSC147=None):
+    def __init__(self, MAX_HW=384, dataset:FSC147=None, aug = True):
         self.max_hw = MAX_HW
         self.dataset = dataset
         self.use_out_mosaic = True
+        self.use_augmentation = aug
     def __call__(self, sample):
         image, lines_boxes, density, dots, im_id, m_flag = sample['image'], sample['lines_boxes'],sample['gt_density'], sample['dots'], sample['id'], sample['m_flag']
         
@@ -214,7 +215,7 @@ class ResizeTrainImage(object):
         aug_p = random.random()
         aug_flag = 0
         mosaic_flag = 0
-        if aug_p < 0.4: # 0.4
+        if self.use_augmentation and aug_p < 0.4: # 0.4
             aug_flag = 1
             if aug_p < 0.25: # 0.25
                 aug_flag = 0
@@ -245,7 +246,8 @@ class ResizeTrainImage(object):
                     rotate=(-15,15),
                     scale=(0.8, 1.2),
                     shear=(-10,10),
-                    translate_percent={"x": (-0.2,0.2), "y": (-0.2,0.2)}
+                    translate_percent={"x": (-0.2,0.2), "y": (-0.2,0.2)},
+                    mode=ia.ALL, 
                 )
             ])
             re1_image, kps_aug = seq(image=re1_image, keypoints=kps)

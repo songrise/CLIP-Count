@@ -17,7 +17,7 @@ import einops
 class CLIPCount(nn.Module):
     def __init__(self, img_size=384, patch_size=16, in_chans=3,
                  embed_dim=768, encoder_depth=24, num_heads=16,
-                 decoder_embed_dim=512, decoder_depth=2, decoder_num_heads=8,
+                 decoder_embed_dim=512, decoder_depth=4, decoder_num_heads=8,
                  mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False,
                  use_vpt:bool = True, n_vpt:int = 2, use_coop:bool=True, 
                  n_coop:int = 2):
@@ -54,7 +54,7 @@ class CLIPCount(nn.Module):
             n_token = n_token + 1 + self.n_vpt
             self.decoder_proj = nn.Conv1d(n_token, self.n_patches,1,1) #!HARDCODED Dec 26: for vit-32
         else:
-            self.decoder_proj = nn.Conv1d(n_token, self.n_patches,1,1)
+            self.decoder_proj = nn.Identity()
             #layer norm for relation descriptor text embedding (1) + learned cls token (1) + learned vpt token (n_vpt)
             self.rd_ln = nn.LayerNorm(1+1) 
             self.rd_pos_embed = nn.Parameter(torch.zeros(1, 1+1, decoder_embed_dim), requires_grad=False)  # fixed sin-cos embedding
@@ -79,17 +79,13 @@ class CLIPCount(nn.Module):
         #! Dec 24: this is Feature Interaction Module (FIM)
         self.decoder_norm_pre = norm_layer(decoder_embed_dim)
 
-        self.fim_blocks_1 = nn.ModuleList([
+        self.fim_blocks = nn.ModuleList([
             CrossAttentionBlock(decoder_embed_dim, decoder_num_heads, mlp_ratio, qkv_bias=True, qk_scale=None, norm_layer=norm_layer)
             for i in range(decoder_depth)])
 
-        self.fim_blocks_2 = nn.ModuleList([
-            CrossAttentionBlock(decoder_embed_dim, decoder_num_heads, mlp_ratio, qkv_bias=True, qk_scale=None, norm_layer=norm_layer)
-            for i in range(decoder_depth)])
 
-        self.decoder_norm_1 = norm_layer(decoder_embed_dim)
+        self.decoder_norm = norm_layer(decoder_embed_dim)
 
-        self.decoder_norm_2 = norm_layer(decoder_embed_dim)
 
         #upsampler
         self.decoder = Decoder(decoder_embed_dim, 384)
@@ -123,7 +119,8 @@ class CLIPCount(nn.Module):
         x_patches = x[:,1+self.n_vpt:,:] #image patches
         #TODO Dec 28: handle cls token for use vpt
         # x_tokens = x[:,:1+self.n_vpt,:] # [CLS] token + learned context token
-        x_cls = cls_token / cls_token.norm(dim=-1, keepdim=True)
+        # x_cls = cls_token / cls_token.norm(dim=-1, keepdim=True)ß
+        x_cls = cls_token 
         x_vpt = x[:,1:1+self.n_vpt,:] # learned context token
         # add pos embed
         if self.proj_feat:
@@ -135,22 +132,17 @@ class CLIPCount(nn.Module):
         y_ = clip.tokenize(text).to(x.device)
         y_ = self.text_encoder(y_).float()
         #TODO Dec 28: add negative prompt for a stronger guidance ??
-        y_ = y_ / y_.norm(dim=-1, keepdim=True)
+        # y_ = y_ / y_.norm(dim=-1, keepdim=True)
 
         if not self.proj_feat:
-            y_ = torch.concat([y_, x_cls, torch.mul(y_, x_cls)], dim=1) # element-wise multiplication (ZegCLIP)
+            y_ = torch.concat([y_, torch.mul(y_, x_cls)], dim=1) # element-wise multiplication (ZegCLIP)
           
-
         # apply Transformer blocks (cross-attention)
-        # x = self.decoder_norm_pre(x)
+        x = self.decoder_norm_pre(x)
 
-        for blk in self.fim_blocks_1:
+        for blk in self.fim_blocks:
             x = blk(x, y_) #TODO Dec 28: check Q K V
-        x = self.decoder_norm_1(x)
-
-        for blk in self.fim_blocks_2:
-            x = blk(x, y_)
-        x = self.decoder_norm_2(x)
+        x = self.decoder_norm(x)
         
         #! Dec 26: deal with the dimension of the CLIP ViT
         x = self.decoder_proj(x)

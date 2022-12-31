@@ -261,7 +261,7 @@ class Model(LightningModule):
         )
 
         # schedular = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=5)
-        schedular = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
+        # schedular = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
         return {"optimizer": optimizer, "lr_scheduler": schedular, "monitor": "val_mae"}
 
     def gen_negative_prompt(self,prompt_gt:List[str]):
