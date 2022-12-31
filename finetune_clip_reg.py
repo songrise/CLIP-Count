@@ -125,8 +125,8 @@ class Model(LightningModule):
         self.all_classes = all_classes
 
         self.save_hyperparameters(args)
-        self.model = models_clip.CLIPCount(use_coop=self.args.use_coop, use_vpt=self.args.use_vpt)
-        self.loss = F.mse_loss
+        self.model = models_clip_regress.CLIPRegress(use_coop=self.args.use_coop, use_vpt=self.args.use_vpt)
+
         # self.loss = FocalLoss()
         # self.loss = F.binary_cross_entropy
 
@@ -137,16 +137,10 @@ class Model(LightningModule):
 
         output = self.model(samples, prompt_gt)
         # Compute loss function
-        mask = np.random.binomial(n=1, p=0.8, size=[384,384])
-        masks = np.tile(mask,(output.shape[0],1))
-        masks = masks.reshape(output.shape[0], 384, 384)
-        masks = torch.from_numpy(masks).to(self.device)
-        #todo test focal loss
-        loss = self.loss(output, gt_density)
-        # loss for negative prompt
 
-        # todo the loss should take the number into account otherwise easy for degenerated sol
-        loss = (loss * masks / (384*384)).sum() / output.shape[0]
+        #todo test focal loss
+        loss = 0
+        # loss for negative prompt
         if self.args.use_contrast:
             prompt_neg = self.gen_negative_prompt(prompt_gt)
             output_neg = self.model(samples, prompt_neg)
@@ -156,7 +150,6 @@ class Model(LightningModule):
         # if args.use_sparsity:
             # sparsity_loss = -torch.log(torch.exp(-torch.abs(output))+torch.exp(-torch.abs(1.-output)))
             # sparsity_loss = torch.mean(sparsity_loss + 0.31326165795326233)
-        self.log('train_loss', loss)
 
         # Update information of MAE and RMSE
         batch_mae = 0
@@ -164,17 +157,20 @@ class Model(LightningModule):
         gt_sum = 0
         #TODO Dec 27: parallelize this
         for i in range(output.shape[0]):
-            pred_cnt = torch.sum(output[i]/60).item()
+            pred_cnt = output[i]
             gt_cnt = torch.sum(gt_density[i]/60).item()
             cnt_err = abs(pred_cnt - gt_cnt)
+            loss = loss + cnt_err/(gt_cnt+1e-5)
             gt_sum += gt_cnt
             batch_mae += cnt_err
             batch_rmse += cnt_err ** 2
+        loss = loss / output.shape[0]
         batch_mae /= output.shape[0]
         batch_rmse /= output.shape[0]
         batch_rmse = math.sqrt(batch_rmse)
         # loss = loss / gt_sum
-        self.log('train_mae', batch_mae)
+        self.log('train_loss', loss)
+        self.log('train_mae', batch_mae.item())
         self.log('train_rmse', batch_rmse)
     
     
@@ -199,35 +195,20 @@ class Model(LightningModule):
         pred_cnts = []
         gt_cnts = []
         for i in range(output.shape[0]):
-            pred_cnt = torch.sum(output[i]/60).item()
+            pred_cnt = output[i]
             gt_cnt = torch.sum(gt_density[i]/60).item()
             cnt_err = abs(pred_cnt - gt_cnt)
+            cnt_err = cnt_err.item()
             batch_mae += cnt_err
             batch_rmse += cnt_err ** 2
-            pred_cnts.append(pred_cnt)
+            pred_cnts.append(pred_cnt.item())
             gt_cnts.append(gt_cnt)
         batch_mae /= output.shape[0]
         batch_rmse /= output.shape[0]
         batch_rmse = math.sqrt(batch_rmse)
 
-        #log the image
-        img_log = samples[0].detach().cpu().numpy()
-        pred_density = output[0].detach().cpu().numpy()
-        pred_log_rgb = cv2.applyColorMap(np.uint8(255*pred_density), cv2.COLORMAP_JET)
-        pred_log_rgb = np.transpose(pred_log_rgb, (2,0,1))
-        gt_density_log = gt_density[0].detach().cpu().numpy()
-        gt_log_rgb = cv2.applyColorMap(np.uint8(255*gt_density_log), cv2.COLORMAP_JET)
-        gt_log_rgb = np.transpose(gt_log_rgb, (2,0,1))
 
-
-        pred_density = einops.repeat(pred_density, 'h w -> c h w', c=3)
-        pred_density = pred_density / pred_density.max() #normalize
-        heatmap_pred = 0.33 * img_log + 0.67 * pred_density
-        gt_density_log = einops.repeat(gt_density_log, 'h w -> c h w', c=3)
-        heatmap_gt = 0.33 * img_log + 0.67 * gt_density_log
-
-        return {"mae": batch_mae, "rmse": batch_rmse, "img": img_log, "pred": pred_log_rgb, "gt": gt_log_rgb, "heatmap_pred": heatmap_pred, "heatmap_gt": heatmap_gt, "prompt": prompt[0], "pred_cnts": pred_cnts, "gt_cnts": gt_cnts}
-    
+        return {"mae": batch_mae, "rmse": batch_rmse, "pred": pred_cnts, "gt": gt_cnts, "img": samples[0], "prompt": prompt[0]}
     def validation_epoch_end(self, outputs):
         avg_mae = np.mean([x['mae'] for x in outputs])
         avg_rmse = np.mean([x['rmse'] for x in outputs])
@@ -237,19 +218,13 @@ class Model(LightningModule):
         # log the image
         idx = random.randint(0, len(outputs)-1)
         img = outputs[idx]["img"]
-        pred = outputs[idx]["pred"]
-        gt = outputs[idx]["gt"]
-        heatmap_pred = outputs[idx]["heatmap_pred"]
-        heatmap_gt = outputs[idx]["heatmap_gt"]
+
+      
         prompt = outputs[idx]["prompt"]
-        pred_cnts = outputs[idx]["pred_cnts"]
-        gt_cnts = outputs[idx]["gt_cnts"]
+        pred_cnts = outputs[idx]["pred"]
+        gt_cnts = outputs[idx]["gt"]
         pred_gt = "pred: {:.2f} gt: {:.2f}".format(pred_cnts[0], gt_cnts[0])
         self.logger.experiment.add_image("val_img", img, self.current_epoch)
-        self.logger.experiment.add_image("density_pred", pred, self.current_epoch)
-        self.logger.experiment.add_image("density_gt", gt, self.current_epoch)
-        self.logger.experiment.add_image("overlay_pred", heatmap_pred, self.current_epoch)
-        self.logger.experiment.add_image("overlay_gt", heatmap_gt, self.current_epoch)
         self.logger.experiment.add_text("prompt", prompt, self.current_epoch)
         self.logger.experiment.add_text("count", pred_gt, self.current_epoch)
     
@@ -327,7 +302,8 @@ if __name__ == '__main__':
         precision=16, 
         max_epochs=args.epochs,
         logger=logger,
-        check_val_every_n_epoch=3
+        check_val_every_n_epoch=3,
+        gradient_clip_val=0.1,
     )#, profiler=prof,max_epochs=1)
     if args.mode == "train":
         #overfit

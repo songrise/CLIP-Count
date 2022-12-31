@@ -14,7 +14,7 @@ import clip
 from torchvision import transforms
 import einops
 
-class CLIPCount(nn.Module):
+class CLIPRegress(nn.Module):
     def __init__(self, img_size=384, patch_size=16, in_chans=3,
                  embed_dim=768, encoder_depth=24, num_heads=16,
                  decoder_embed_dim=512, decoder_depth=4, decoder_num_heads=8,
@@ -88,7 +88,7 @@ class CLIPCount(nn.Module):
 
 
         #upsampler
-        self.decoder = Decoder(decoder_embed_dim, 384)
+        self.decoder = nn.Linear(2*512,1)
         # --------------------------------------------------------------------------
 
         self.norm_pix_loss = norm_pix_loss
@@ -135,21 +135,16 @@ class CLIPCount(nn.Module):
         # y_ = y_ / y_.norm(dim=-1, keepdim=True)
 
         if not self.proj_feat:
-            y_ = torch.concat([y_, x_cls,torch.mul(y_, x_cls)], dim=1) # element-wise multiplication (ZegCLIP)
+            y_ = torch.concat([y_, torch.mul(y_, x_cls)], dim=1) # element-wise multiplication (ZegCLIP)
           
         # apply Transformer blocks (cross-attention)
         x = self.decoder_norm_pre(x)
 
         for blk in self.fim_blocks:
-            x = blk(x, y_) #TODO Dec 28: check Q K V
+            x = blk(y_, x) #TODO Dec 28: check Q K V
         x = self.decoder_norm(x)
-        
-        #! Dec 26: deal with the dimension of the CLIP ViT
-        x = self.decoder_proj(x)
-        # Density map regression
-        n, hw, c = x.shape
-        h = w = int(math.sqrt(hw))
-        x = x.transpose(1, 2).reshape(n, c, h, w)
+
+        x = x.reshape(x.shape[0], -1)
         x = self.decoder(x)
         return x
 
@@ -248,47 +243,6 @@ class CLIPTextTransformer(nn.Module):
         x = x.unsqueeze(1)  # [batch_size, 1, transformer.width]
         return x
 
-# class Decoder(nn.Module):
-#     def __init__(self, in_dim:int, target_hw:int) -> None:
-#         super().__init__()
-#                 # Density map regresssion module
-#         self.decode_head0 = nn.Sequential(
-#             nn.Conv2d(in_dim, 256, kernel_size=3, stride=1, padding=1),
-#             nn.GroupNorm(8, 256),
-#             nn.ReLU(inplace=True)
-#         )
-#         self.decode_head1 = nn.Sequential(
-#             nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
-#             nn.GroupNorm(8, 256),
-#             nn.ReLU(inplace=True)
-#         )
-#         self.decode_head2 = nn.Sequential(
-#             nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
-#             nn.GroupNorm(8, 256),
-#             nn.ReLU(inplace=True)
-#         )
-#         self.decode_head3 = nn.Sequential(
-#             nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
-#             nn.GroupNorm(8, 256),
-#             nn.ReLU(inplace=True),
-#             nn.Conv2d(256, 1, kernel_size=1, stride=1)
-#         )  
-
-#     def forward(self, x):
-#         #!HARDCODED Dec 26: directly upsample to 384x384
-#         x = F.interpolate(
-#                          self.decode_head0(x), size=x.shape[-1]*3, mode='bilinear', align_corners=False)
-#         x = F.interpolate(
-#                          self.decode_head1(x), size=x.shape[-1]*3, mode='bilinear', align_corners=False)
-#         x = F.interpolate(
-#                          self.decode_head2(x), size=x.shape[-1]*3, mode='bilinear', align_corners=False)
-#         #!HARDCODED Dec 26: directly upsample to 384x384
-#         x = F.interpolate(
-#                          self.decode_head3(x), size=384, mode='bilinear', align_corners=False)
-#         x = F.sigmoid(x)
-#         x = einops.rearrange(x, 'n 1 h w -> n h w')
-#         return x
-
 
 class Decoder(nn.Module):
     def __init__(self, in_dim:int, target_hw:int) -> None:
@@ -339,50 +293,6 @@ class Decoder(nn.Module):
         return x
 
 
-def mae_vit_base_patch16_dec512d8b(**kwargs):
-    model = CLIPCount(
-        patch_size=16, embed_dim=768, encoder_depth=12, num_heads=12,
-        decoder_embed_dim=512, decoder_depth=2, decoder_num_heads=16,
-        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    return model
-
-
-def mae_vit_large_patch16_dec512d8b(**kwargs):
-    model = CLIPCount(
-        patch_size=16, embed_dim=1024, encoder_depth=24, num_heads=16,
-        decoder_embed_dim=512, decoder_depth=2, decoder_num_heads=16,
-        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    return model
-
-
-def mae_vit_huge_patch14_dec512d8b(**kwargs):
-    model = CLIPCount(
-        patch_size=14, embed_dim=1280, encoder_depth=32, num_heads=16,
-        decoder_embed_dim=512, decoder_depth=2, decoder_num_heads=16,
-        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    return model
-
-def mae_vit_base_patch16_fim4(**kwargs):
-    model = CLIPCount(
-        patch_size=16, embed_dim=768, encoder_depth=12, num_heads=12,
-        decoder_embed_dim=512, decoder_depth=4, decoder_num_heads=16,
-        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    return model
-
-def mae_vit_base_patch16_fim6(**kwargs):
-    model = CLIPCount(
-        patch_size=16, embed_dim=768, encoder_depth=12, num_heads=12,
-        decoder_embed_dim=512, decoder_depth=6, decoder_num_heads=16,
-        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    return model
-
-
-# set recommended archs
-mae_vit_base_patch16 = mae_vit_base_patch16_dec512d8b  
-mae_vit_base4_patch16 = mae_vit_base_patch16_fim4 # decoder: 4 blocks
-mae_vit_base6_patch16 = mae_vit_base_patch16_fim6 # decoder: 6 blocks
-mae_vit_large_patch16 = mae_vit_large_patch16_dec512d8b  
-mae_vit_huge_patch14 = mae_vit_huge_patch14_dec512d8b  
 
 if __name__ == "__main__":
     clip_count = CLIPCount()

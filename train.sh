@@ -9,3 +9,5 @@
 
 nohup python -u finetune_clip.py --epochs 200 --weight_decay 0.05 --lr 1e-4 --batch_size 16 --exp_name vitB16val2
 nohup python -u finetune_clip.py --epochs 200 --weight_decay 0.05 --lr 1e-4 --batch_size 16 --use_coop  --exp_name vitB16val3
+
+nohup python -u finetune_clip_reg.py --epochs 200 --weight_decay 0.05 --lr 3e-6 --batch_size 16 --use_coop  --exp_name vitB16reg
