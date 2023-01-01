@@ -122,7 +122,7 @@ class CLIPCount(nn.Module):
         # x_tokens = x[:,:1+self.n_vpt,:] # [CLS] token + learned context token
         # x_cls = cls_token / cls_token.norm(dim=-1, keepdim=True)ß
         x_cls = cls_token 
-        x_vpt = x[:,1:1+self.n_vpt,:] # learned context token
+        # x_vpt = x[:,1:1+self.n_vpt,:] # learned context token
         # add pos embed
         if self.proj_feat:
             x = x + self.decoder_pos_embed
@@ -197,8 +197,7 @@ class CLIPViT(nn.Module):
             x = torch.cat([self.vit.class_embedding.to(x.dtype) + \
                             torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device), 
                             x], dim=1)  # shape = [*, grid ** 2 + 1, width]
-        #! Dec 26: temp not use class embedding here
-        # x = x + self.vit.positional_embedding.to(x.dtype)
+        x = x + self.vit.positional_embedding.to(x.dtype)
         x = self.vit.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
@@ -249,47 +248,6 @@ class CLIPTextTransformer(nn.Module):
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.clip_model.text_projection
         x = x.unsqueeze(1)  # [batch_size, 1, transformer.width]
         return x
-
-# class Decoder(nn.Module):
-#     def __init__(self, in_dim:int, target_hw:int) -> None:
-#         super().__init__()
-#                 # Density map regresssion module
-#         self.decode_head0 = nn.Sequential(
-#             nn.Conv2d(in_dim, 256, kernel_size=3, stride=1, padding=1),
-#             nn.GroupNorm(8, 256),
-#             nn.ReLU(inplace=True)
-#         )
-#         self.decode_head1 = nn.Sequential(
-#             nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
-#             nn.GroupNorm(8, 256),
-#             nn.ReLU(inplace=True)
-#         )
-#         self.decode_head2 = nn.Sequential(
-#             nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
-#             nn.GroupNorm(8, 256),
-#             nn.ReLU(inplace=True)
-#         )
-#         self.decode_head3 = nn.Sequential(
-#             nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
-#             nn.GroupNorm(8, 256),
-#             nn.ReLU(inplace=True),
-#             nn.Conv2d(256, 1, kernel_size=1, stride=1)
-#         )  
-
-#     def forward(self, x):
-#         #!HARDCODED Dec 26: directly upsample to 384x384
-#         x = F.interpolate(
-#                          self.decode_head0(x), size=x.shape[-1]*3, mode='bilinear', align_corners=False)
-#         x = F.interpolate(
-#                          self.decode_head1(x), size=x.shape[-1]*3, mode='bilinear', align_corners=False)
-#         x = F.interpolate(
-#                          self.decode_head2(x), size=x.shape[-1]*3, mode='bilinear', align_corners=False)
-#         #!HARDCODED Dec 26: directly upsample to 384x384
-#         x = F.interpolate(
-#                          self.decode_head3(x), size=384, mode='bilinear', align_corners=False)
-#         x = F.sigmoid(x)
-#         x = einops.rearrange(x, 'n 1 h w -> n h w')
-#         return x
 
 
 class Decoder(nn.Module):

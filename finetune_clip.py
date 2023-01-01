@@ -32,14 +32,14 @@ from pytorch_lightning import LightningModule, Trainer, seed_everything
 from pytorch_lightning.lite import LightningLite
 import einops
 import cv2 
-
+import gradio as gr
 
 os.environ["CUDA_LAUNCH_BLOCKING"] = '1'
 
 
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE pre-training', add_help=False)
-    parser.add_argument("--mode",type = str, default = "train", choices = ["train","test"], help = "train or test")
+    parser.add_argument("--mode",type = str, default = "train", choices = ["train","test", "app"], help = "train or test")
     parser.add_argument("--exp_name",type = str, default = "exp", help = "experiment name")
     parser.add_argument('--batch_size', default=26, type=int,
                         help='Batch size per GPU (effective batch size is batch_size * accum_iter * # gpus')
@@ -303,6 +303,12 @@ class Model(LightningModule):
 
         return {"mae": batch_mae, "rmse": batch_rmse, "img": img_log, "pred": pred_log_rgb, "gt": gt_log_rgb, "heatmap_pred": heatmap_pred, "heatmap_gt": heatmap_gt, "prompt": prompt[0], "pred_cnts": pred_cnts, "gt_cnts": gt_cnts}
     
+    def forward(self, img, prompt):
+        """
+        img: (1, 3, H, W)
+        prompt: List[str]
+        """
+        return self.model(img, prompt)
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
@@ -368,7 +374,7 @@ if __name__ == '__main__':
 
     save_callback = pl.callbacks.ModelCheckpoint(monitor='val_mae', save_top_k=1, mode='min')
     model = Model(args,all_classes=all_classes_train)
-    model = Model.load_from_checkpoint("/root/autodl-tmp/CLIPCount/lightning_logs/vitB16enc/version_0/checkpoints/epoch=197-step=45342.ckpt")
+    # model = Model.load_from_checkpoint("/root/autodl-tmp/CLIPCount/lightning_logs/vitB16enc/version_0/checkpoints/epoch=197-step=45342.ckpt")
     # prof = pl.profilers.AdvancedProfiler(dirpath = ".",filename="perf_logs")
     logger = pl.loggers.TensorBoardLogger("lightning_logs", name=args.exp_name)
     trainer = Trainer(
@@ -390,3 +396,32 @@ if __name__ == '__main__':
         trainer.test(model, test_dataloader)
     elif args.mode == "test":
         trainer.test(model, val_dataloader)
+
+    elif args.mode == "app":
+        def infer(img, prompt):
+            model.eval()
+            model.model = model.model.cuda()
+            with torch.no_grad():
+
+                img = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).cuda()
+                img = img.float()/255
+                prompt = [prompt]
+                with torch.cuda.amp.autocast():
+                    pred = model.forward(img, prompt)
+                pred_cnt = torch.sum(pred/60).item()
+                pred_density = pred[0].detach().cpu().numpy()
+                pred_rgb = cv2.applyColorMap(np.uint8(255*pred_density), cv2.COLORMAP_JET)
+            return pred_rgb, pred_cnt
+        demo = gr.Interface(
+            fn=infer,
+            inputs=[
+                gr.inputs.Image(shape=(224, 224), label="Image"),
+                gr.inputs.Textbox(lines=1, label="Prompt"),
+            ],
+            outputs= ["image", "number"],
+            interpretation="default",
+            title="CLIPCount",
+            description="Counting with CLIP",
+            
+        )
+        demo.launch(share=True)
