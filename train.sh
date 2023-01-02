@@ -12,13 +12,18 @@
 
 #best
 # nohup python -u finetune_clip.py --epochs 200 --weight_decay 0.05 --lr 1e-4 --batch_size 16 --use_coop  --exp_name vitB16enc
-nohup python -u finetune_clip.py --epochs 200 --weight_decay 0.05 --lr 1e-4 --batch_size 16 --use_coop  --exp_name vitB16enc_nocoop
-nohup python -u finetune_clip.py --epochs 200 --weight_decay 0.05 --lr 1e-4 --batch_size 16 --use_coop --use_vpt  --exp_name vitB16enc_full
+# nohup python -u finetune_clip.py --epochs 200 --weight_decay 0.05 --lr 1e-4 --batch_size 16 --use_coop  --exp_name vitB16enc_nocoop
+nohup python -u finetune_clip.py --epochs 170 --weight_decay 0.05 --lr 1e-4 --batch_size 16 --use_coop --use_vpt  --exp_name vitB16enc_fix
 
+nohup python -u finetune_clip.py --epochs 200 --weight_decay 0.05 --lr 1e-4 --batch_size 16 --use_coop --backbone b16 --exp_name vitB16dec
+# best but b32
+nohup python -u finetune_clip.py --epochs 200 --weight_decay 0.05 --lr 1e-4 --batch_size 16 --use_coop --backbone b32  --exp_name vitB32enc
+nohup python -u finetune_clip.py --epochs 200 --weight_decay 0.05 --lr 1e-4 --batch_size 16 --use_coop --use_vpt --backbone b32  --exp_name vitB32enc_full
 
 
 
 # nohup python -u finetune_clip_reg.py --epochs 200 --weight_decay 0.05 --lr 3e-6 --batch_size 16 --use_coop  --exp_name vitB16reg
-
 # #test
+ python -u finetune_clip.py --epochs 200 --weight_decay 0.05 --lr 1e-4 --batch_size 16  --exp_name vitB16enc --mode test
+
 # python -u finetune_clip.py --epochs 200 --weight_decay 0.05 --lr 1e-4 --batch_size 16  --exp_name vitB16enc --mode app

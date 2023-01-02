@@ -99,6 +99,7 @@ class FSC147(Dataset):
         elif self.split == "test":
             dots = np.array(anno['points'])
             image = Image.open('{}/{}'.format(self.im_dir, im_id))
+            text = self.class_dict[im_id]
             image.load()
             W, H = image.size
 
@@ -141,7 +142,7 @@ class FSC147(Dataset):
             gt_map = gt_map * 60
             
             sample = {'image':image,'dots':dots, 'boxes':boxes, 'pos':rects, 'gt_map':gt_map}
-            return sample['image'].float(), sample['dots'], sample['boxes'], sample['pos'] ,sample['gt_map']
+            return sample['image'].float(), sample['gt_map'], sample['boxes'], sample['pos'], text
 
 class ResizePreTrainImage(object):
     """

@@ -15,7 +15,7 @@
                 "--batch_size",
                 "2",
                 "--mode",
-                "app"
+                "train"
             ]
         }
     ]

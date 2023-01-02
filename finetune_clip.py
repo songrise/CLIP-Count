@@ -33,6 +33,7 @@ from pytorch_lightning.lite import LightningLite
 import einops
 import cv2 
 import gradio as gr
+from torchvision.transforms import Resize
 
 os.environ["CUDA_LAUNCH_BLOCKING"] = '1'
 
@@ -51,6 +52,8 @@ def get_args_parser():
     parser.add_argument('--model', default='mae_vit_base_patch16', type=str, metavar='MODEL',
                         help='Name of model to train')
 
+    parser.add_argument('--backbone', default="b16", choices=["b16", "b32"], 
+                    type=str, help = "backbone of clip")
     parser.add_argument('--mask_ratio', default=0.5, type=float,
                         help='Masking ratio (percentage of removed patches).')
 
@@ -89,7 +92,7 @@ def get_args_parser():
 
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
-    parser.add_argument('--num_workers', default=10, type=int)
+    parser.add_argument('--num_workers', default=12, type=int)
     parser.add_argument('--pin_mem', action='store_true',
                         help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
     parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
@@ -124,7 +127,11 @@ class Model(LightningModule):
         self.all_classes = all_classes
 
         self.save_hyperparameters(args)
-        self.model = models_clip.CLIPCount(use_coop=self.args.use_coop, use_vpt=self.args.use_vpt)
+        self.model = models_clip.CLIPCount(
+                        use_coop=self.args.use_coop, 
+                        use_vpt=self.args.use_vpt,
+                        # backbone = self.args.backbone
+                        )
         self.loss = F.mse_loss
         # self.loss = FocalLoss()
         # self.loss = F.binary_cross_entropy
@@ -193,21 +200,19 @@ class Model(LightningModule):
 
         
         # Update information of MAE and RMSE
-        batch_mae = 0
-        batch_rmse = 0
+        batch_mae = []
+        batch_rmse = []
         pred_cnts = []
         gt_cnts = []
         for i in range(output.shape[0]):
             pred_cnt = torch.sum(output[i]/60).item()
             gt_cnt = torch.sum(gt_density[i]/60).item()
             cnt_err = abs(pred_cnt - gt_cnt)
-            batch_mae += cnt_err
-            batch_rmse += cnt_err ** 2
+            batch_mae.append(cnt_err)
+            batch_rmse.append(cnt_err ** 2)
             pred_cnts.append(pred_cnt)
             gt_cnts.append(gt_cnt)
-        batch_mae /= output.shape[0]
-        batch_rmse /= output.shape[0]
-        batch_rmse = math.sqrt(batch_rmse)
+
 
         #log the image
         img_log = samples[0].detach().cpu().numpy()
@@ -228,10 +233,17 @@ class Model(LightningModule):
         return {"mae": batch_mae, "rmse": batch_rmse, "img": img_log, "pred": pred_log_rgb, "gt": gt_log_rgb, "heatmap_pred": heatmap_pred, "heatmap_gt": heatmap_gt, "prompt": prompt[0], "pred_cnts": pred_cnts, "gt_cnts": gt_cnts}
     
     def validation_epoch_end(self, outputs):
-        avg_mae = np.mean([x['mae'] for x in outputs])
-        avg_rmse = np.mean([x['rmse'] for x in outputs])
-        self.log('val_mae', avg_mae)
-        self.log('val_rmse', avg_rmse)
+        #TODO Jan 02: has bug in calculate rmse
+        all_mae = []
+        all_rmse = []
+        self.print(len(all_rmse))
+        for output in outputs:
+            all_mae += output["mae"]
+            all_rmse += output["rmse"]
+        val_mae = np.mean(all_mae)
+        val_rmse = np.sqrt(np.mean(all_rmse))
+        self.log('val_mae', val_mae)
+        self.log('val_rmse', val_rmse)
 
         # log the image
         idx = random.randint(0, len(outputs)-1)
@@ -255,32 +267,30 @@ class Model(LightningModule):
     def test_step(self, batch, batch_idx):
                 # If there is at least one image in the batch using Type 2 Mosaic, 0-shot is banned.
         samples, gt_density, boxes, m_flag, prompt = batch
-        # If there is at least one image in the batch using Type 2 Mosaic, 0-shot is banned.
 
+        #! Jan 02: test text
+        prompt = self.gen_negative_prompt(prompt)
+
+        #! Jan 02: revise
+        samples = Resize((384, 384))(samples)
 
         output = self.model(samples, prompt)
-        # output = einops.rearrange(output, 'b h w -> b (h w)')
-        # gt_density = einops.rearrange(gt_density, 'b h w -> b (h w)')
-        #! Dec 24: add sigmoid to output here
-        # output = F.sigmoid(output)
 
         
         # Update information of MAE and RMSE
-        batch_mae = 0
-        batch_rmse = 0
+        batch_mae = []
+        batch_rmse = []
         pred_cnts = []
         gt_cnts = []
         for i in range(output.shape[0]):
             pred_cnt = torch.sum(output[i]/60).item()
             gt_cnt = torch.sum(gt_density[i]/60).item()
             cnt_err = abs(pred_cnt - gt_cnt)
-            batch_mae += cnt_err
-            batch_rmse += cnt_err ** 2
+            batch_mae.append(cnt_err)
+            batch_rmse.append(cnt_err ** 2)
             pred_cnts.append(pred_cnt)
             gt_cnts.append(gt_cnt)
-        batch_mae /= output.shape[0]
-        batch_rmse /= output.shape[0]
-        batch_rmse = math.sqrt(batch_rmse)
+ 
 
         #log the image
         img_log = samples[0].detach().cpu().numpy()
@@ -294,15 +304,26 @@ class Model(LightningModule):
 
         pred_density = einops.repeat(pred_density, 'h w -> c h w', c=3)
         pred_density = pred_density / pred_density.max() #normalize
+        heatmap_pred = img_log #! Jan 02: temp for debugging
         heatmap_pred = 0.33 * img_log + 0.67 * pred_density
         gt_density_log = einops.repeat(gt_density_log, 'h w -> c h w', c=3)
+        heatmap_gt = img_log #! Jan 02: temp for debugging
         heatmap_gt = 0.33 * img_log + 0.67 * gt_density_log
 
-        self.log('test_mae', batch_mae)
-        self.log('test_rmse', batch_rmse)
 
         return {"mae": batch_mae, "rmse": batch_rmse, "img": img_log, "pred": pred_log_rgb, "gt": gt_log_rgb, "heatmap_pred": heatmap_pred, "heatmap_gt": heatmap_gt, "prompt": prompt[0], "pred_cnts": pred_cnts, "gt_cnts": gt_cnts}
     
+    def test_epoch_end(self, outputs):
+        all_mae = []
+        all_rmse = []
+        for output in outputs:
+            all_mae += output["mae"]
+            all_rmse += output["rmse"]
+        test_mae = np.mean(all_mae)
+        test_rmse = np.sqrt(np.mean(all_rmse))
+        self.log('test_mae', test_mae)
+        self.log('test_rmse', test_rmse)
+
     def forward(self, img, prompt):
         """
         img: (1, 3, H, W)
@@ -327,7 +348,10 @@ class Model(LightningModule):
             neg_prompt = prompt_gt[i]
             while neg_prompt == prompt_gt[i]:
                 neg_prompt = random.choice(self.all_classes)
+                # neg_prompt = random.choice(["dog","grapes", "airplane", "birds", "bottle caps", "objects","people","potted plants","shoes","table"])
+                # neg_prompt = "objects"
             prompts.append(neg_prompt)
+
         return prompts
   
 
@@ -335,6 +359,11 @@ if __name__ == '__main__':
     args = get_args_parser()
     args = args.parse_args()
     seed_everything(1)
+    random.seed(1)
+    np.random.seed(1)
+    torch.manual_seed(1)
+    torch.cuda.manual_seed(1)
+
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     
@@ -365,16 +394,16 @@ if __name__ == '__main__':
     sampler_test = torch.utils.data.SequentialSampler(dataset_test)
     test_dataloader =  torch.utils.data.DataLoader(
         dataset_test, sampler=sampler_test,
-        batch_size=args.batch_size,
+        batch_size=1,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=False,
     )
     #seed everything
 
-    save_callback = pl.callbacks.ModelCheckpoint(monitor='val_mae', save_top_k=1, mode='min')
+    save_callback = pl.callbacks.ModelCheckpoint(monitor='val_mae', save_top_k=2, mode='min',  filename='{epoch}-{val_mae:.2f}',)
     model = Model(args,all_classes=all_classes_train)
-    # model = Model.load_from_checkpoint("/root/autodl-tmp/CLIPCount/lightning_logs/vitB16enc/version_0/checkpoints/epoch=197-step=45342.ckpt")
+    model = Model.load_from_checkpoint("/root/autodl-tmp/CLIPCount/lightning_logs/vitB16enc_fix/version_0/checkpoints/epoch=92-val_mae=20.93.ckpt")
     # prof = pl.profilers.AdvancedProfiler(dirpath = ".",filename="perf_logs")
     logger = pl.loggers.TensorBoardLogger("lightning_logs", name=args.exp_name)
     trainer = Trainer(
@@ -393,8 +422,9 @@ if __name__ == '__main__':
         #normal
         trainer.fit(model, train_dataloader, val_dataloader)
         #test
-        trainer.test(model, test_dataloader)
+        # trainer.test(model, test_dataloader)
     elif args.mode == "test":
+        model.eval()
         trainer.test(model, val_dataloader)
 
     elif args.mode == "app":

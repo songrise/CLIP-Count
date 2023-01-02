@@ -20,12 +20,19 @@ class CLIPCount(nn.Module):
                  decoder_embed_dim=512, decoder_depth=4, decoder_num_heads=8,
                  mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False,
                  use_vpt:bool = True, n_vpt:int = 2, use_coop:bool=True, 
-                 n_coop:int = 2):
+                 n_coop:int = 2, backbone:str="b16"):
         super().__init__()
 
         # --------------------------------------------------------------------------
         # MAE encoder specifics
-        self.clip, clip_preprocess = clip.load("ViT-B/16")
+        if backbone == "b16":
+            self.clip, clip_preprocess = clip.load("ViT-B/16")
+            self.n_patches = 196
+            # print("Loaded CLIP ViT-B/16")
+        elif backbone == "b32":
+            self.clip, clip_preprocess = clip.load("ViT-B/32")
+            self.n_patches = 49
+            # print("Loaded CLIP ViT-B/32")
         self.clip = self.clip.to('cuda')
         self.clip.requires_grad_(False)
         self.preprocess = transforms.Compose([transforms.Resize((224,224)),
@@ -34,6 +41,7 @@ class CLIPCount(nn.Module):
                                 std= (0.26862954, 0.26130258, 0.27577711)
                                 ) 
                             ])
+
         self.use_vpt = use_vpt
         self.use_coop = use_coop
         self.n_vpt = n_vpt if use_vpt else 0
@@ -46,7 +54,7 @@ class CLIPCount(nn.Module):
         # MAE decoder specifics
         self.decoder_linear = nn.Linear(embed_dim, decoder_embed_dim, bias=True)
         self.proj_feat = False  #!HARDCODED Dec 27: 
-        self.n_patches = 196
+
         n_token = self.n_patches
         self.rd_ln = nn.Identity() #layer norm for relation descriptor
         self.rd_pos_embed = None
@@ -187,17 +195,18 @@ class CLIPViT(nn.Module):
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
         img_patches = x
         
+
+        x = torch.cat([self.vit.class_embedding.to(x.dtype) + \
+                        torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device), 
+                        x], dim=1)  # shape = [*, grid ** 2 + 1, width]
+        x = x + self.vit.positional_embedding.to(x.dtype)
+
         if self.use_vpt:
             vpts = einops.repeat(self.visual_prompt, 'n d -> b n d', b=x.shape[0])
-            x = torch.cat([self.vit.class_embedding.to(x.dtype) + \
-                            torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device), 
+            x = torch.cat([x[:, :1, :],
                             vpts,
-                            x], dim=1)  # shape = [*, grid ** 2 + 1 + n_vpt, width]
-        else:
-            x = torch.cat([self.vit.class_embedding.to(x.dtype) + \
-                            torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device), 
-                            x], dim=1)  # shape = [*, grid ** 2 + 1, width]
-        x = x + self.vit.positional_embedding.to(x.dtype)
+                            x[:,1:,:]], dim=1)  # shape = [*, grid ** 2 + 1 + n_vpt, width]
+
         x = self.vit.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
@@ -260,6 +269,7 @@ class Decoder(nn.Module):
         
         for i in range(self.n_levels):
             decode_head = nn.Sequential(
+                # nn.Conv2d(prev_dim, 256, kernel_size=5, stride=1, padding=2),
                 nn.Conv2d(prev_dim, 256, kernel_size=3, stride=1, padding=1),
                 nn.GroupNorm(8, 256),
                 nn.LeakyReLU(inplace=True)
