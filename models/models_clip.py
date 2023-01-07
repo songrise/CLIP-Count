@@ -263,10 +263,9 @@ class Decoder(nn.Module):
     def __init__(self, in_dim:int, target_hw:int) -> None:
         super().__init__()
         # Density map regresssion module
-        self.n_levels = 4
+        self.n_levels = 5
         convs = []
         prev_dim = in_dim # number of feature channels
-        
         for i in range(self.n_levels):
             decode_head = nn.Sequential(
                 # nn.Conv2d(prev_dim, 256, kernel_size=5, stride=1, padding=2),
@@ -288,7 +287,7 @@ class Decoder(nn.Module):
         for conv in self.convs:
             for m in conv.modules():
                 if isinstance(m, nn.Conv2d):
-                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                    nn.init.xavier_normal_(m.weight)
 
     def forward(self, x):
         n_skip = []
@@ -309,50 +308,50 @@ class Decoder(nn.Module):
         return x
 
 
-def mae_vit_base_patch16_dec512d8b(**kwargs):
-    model = CLIPCount(
-        patch_size=16, embed_dim=768, encoder_depth=12, num_heads=12,
-        decoder_embed_dim=512, decoder_depth=2, decoder_num_heads=16,
-        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    return model
+# def mae_vit_base_patch16_dec512d8b(**kwargs):
+#     model = CLIPCount(
+#         patch_size=16, embed_dim=768, encoder_depth=12, num_heads=12,
+#         decoder_embed_dim=512, decoder_depth=2, decoder_num_heads=16,
+#         mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+#     return model
 
 
-def mae_vit_large_patch16_dec512d8b(**kwargs):
-    model = CLIPCount(
-        patch_size=16, embed_dim=1024, encoder_depth=24, num_heads=16,
-        decoder_embed_dim=512, decoder_depth=2, decoder_num_heads=16,
-        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    return model
+# def mae_vit_large_patch16_dec512d8b(**kwargs):
+#     model = CLIPCount(
+#         patch_size=16, embed_dim=1024, encoder_depth=24, num_heads=16,
+#         decoder_embed_dim=512, decoder_depth=2, decoder_num_heads=16,
+#         mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+#     return model
 
 
-def mae_vit_huge_patch14_dec512d8b(**kwargs):
-    model = CLIPCount(
-        patch_size=14, embed_dim=1280, encoder_depth=32, num_heads=16,
-        decoder_embed_dim=512, decoder_depth=2, decoder_num_heads=16,
-        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    return model
+# def mae_vit_huge_patch14_dec512d8b(**kwargs):
+#     model = CLIPCount(
+#         patch_size=14, embed_dim=1280, encoder_depth=32, num_heads=16,
+#         decoder_embed_dim=512, decoder_depth=2, decoder_num_heads=16,
+#         mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+#     return model
 
-def mae_vit_base_patch16_fim4(**kwargs):
-    model = CLIPCount(
-        patch_size=16, embed_dim=768, encoder_depth=12, num_heads=12,
-        decoder_embed_dim=512, decoder_depth=4, decoder_num_heads=16,
-        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    return model
+# def mae_vit_base_patch16_fim4(**kwargs):
+#     model = CLIPCount(
+#         patch_size=16, embed_dim=768, encoder_depth=12, num_heads=12,
+#         decoder_embed_dim=512, decoder_depth=4, decoder_num_heads=16,
+#         mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+#     return model
 
-def mae_vit_base_patch16_fim6(**kwargs):
-    model = CLIPCount(
-        patch_size=16, embed_dim=768, encoder_depth=12, num_heads=12,
-        decoder_embed_dim=512, decoder_depth=6, decoder_num_heads=16,
-        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
-    return model
+# def mae_vit_base_patch16_fim6(**kwargs):
+#     model = CLIPCount(
+#         patch_size=16, embed_dim=768, encoder_depth=12, num_heads=12,
+#         decoder_embed_dim=512, decoder_depth=6, decoder_num_heads=16,
+#         mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+#     return model
 
 
-# set recommended archs
-mae_vit_base_patch16 = mae_vit_base_patch16_dec512d8b  
-mae_vit_base4_patch16 = mae_vit_base_patch16_fim4 # decoder: 4 blocks
-mae_vit_base6_patch16 = mae_vit_base_patch16_fim6 # decoder: 6 blocks
-mae_vit_large_patch16 = mae_vit_large_patch16_dec512d8b  
-mae_vit_huge_patch14 = mae_vit_huge_patch14_dec512d8b  
+# # set recommended archs
+# mae_vit_base_patch16 = mae_vit_base_patch16_dec512d8b  
+# mae_vit_base4_patch16 = mae_vit_base_patch16_fim4 # decoder: 4 blocks
+# mae_vit_base6_patch16 = mae_vit_base_patch16_fim6 # decoder: 6 blocks
+# mae_vit_large_patch16 = mae_vit_large_patch16_dec512d8b  
+# mae_vit_huge_patch14 = mae_vit_huge_patch14_dec512d8b  
 
 if __name__ == "__main__":
     clip_count = CLIPCount()

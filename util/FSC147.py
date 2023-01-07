@@ -269,9 +269,12 @@ class ResizeTrainImage(object):
                 re_image = TF.hflip(re_image)
                 resized_density = TF.hflip(resized_density)
         
-        #Random luminance
+        # Random vertical flip
         if aug_flag == 1:
-            re_image = TF.adjust_brightness(re_image, random.uniform(0.8, 1.2))
+            flip_p = random.random()
+            if flip_p > 0.5:
+                re_image = TF.vflip(re_image)
+                resized_density = TF.vflip(resized_density)
 
         
         # Random 384*384 crop in a new_W*384 image and 384*new_W density map

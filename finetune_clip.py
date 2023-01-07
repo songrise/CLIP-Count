@@ -158,11 +158,12 @@ class Model(LightningModule):
             output_neg = self.model(samples, prompt_neg)
             neg_density = torch.zeros_like(gt_density) # for negative prompt, density is all zero
             loss_neg = self.loss(output_neg, neg_density)
-            loss = loss + loss_neg * 0.5
+            loss = loss + loss_neg * 0.1
         # if args.use_sparsity:
             # sparsity_loss = -torch.log(torch.exp(-torch.abs(output))+torch.exp(-torch.abs(1.-output)))
             # sparsity_loss = torch.mean(sparsity_loss + 0.31326165795326233)
         self.log('train_loss', loss)
+        # self.log('train_loss_neg', loss_neg)
 
         # Update information of MAE and RMSE
         batch_mae = 0
@@ -269,7 +270,7 @@ class Model(LightningModule):
         samples, gt_density, boxes, m_flag, prompt = batch
 
         #! Jan 02: test text
-        prompt = self.gen_negative_prompt(prompt)
+        # prompt = self.gen_negative_prompt(prompt)
 
         #! Jan 02: revise
         samples = Resize((384, 384))(samples)
@@ -347,7 +348,7 @@ class Model(LightningModule):
         for i in range(len(prompt_gt)):
             neg_prompt = prompt_gt[i]
             while neg_prompt == prompt_gt[i]:
-                neg_prompt = random.choice(self.all_classes)
+                neg_prompt = random.choice(self.all_classes[:40])
                 # neg_prompt = random.choice(["dog","grapes", "airplane", "birds", "bottle caps", "objects","people","potted plants","shoes","table"])
                 # neg_prompt = "objects"
             prompts.append(neg_prompt)
@@ -403,7 +404,6 @@ if __name__ == '__main__':
 
     save_callback = pl.callbacks.ModelCheckpoint(monitor='val_mae', save_top_k=2, mode='min',  filename='{epoch}-{val_mae:.2f}',)
     model = Model(args,all_classes=all_classes_train)
-    model = Model.load_from_checkpoint("/root/autodl-tmp/CLIPCount/lightning_logs/vitB16enc_fix/version_0/checkpoints/epoch=92-val_mae=20.93.ckpt")
     # prof = pl.profilers.AdvancedProfiler(dirpath = ".",filename="perf_logs")
     logger = pl.loggers.TensorBoardLogger("lightning_logs", name=args.exp_name)
     trainer = Trainer(
@@ -424,10 +424,12 @@ if __name__ == '__main__':
         #test
         # trainer.test(model, test_dataloader)
     elif args.mode == "test":
+        model = Model.load_from_checkpoint("/root/autodl-tmp/CLIPCount/lightning_logs/vitB16enc_fix/version_0/checkpoints/epoch=92-val_mae=20.93.ckpt")
         model.eval()
         trainer.test(model, val_dataloader)
 
     elif args.mode == "app":
+        model = Model.load_from_checkpoint("/root/autodl-tmp/CLIPCount/lightning_logs/vitB16enc_fix/version_0/checkpoints/epoch=92-val_mae=20.93.ckpt")
         def infer(img, prompt):
             model.eval()
             model.model = model.model.cuda()
