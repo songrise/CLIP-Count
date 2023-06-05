@@ -9,13 +9,11 @@ To be released soon.
 
 ## Citation
 ```
-@misc{jiang2023clipcount,
-      title={CLIP-Count: Towards Text-Guided Zero-Shot Object Counting},
-      author={Ruixiang Jiang and Lingbo Liu and Changwen Chen},
-      year={2023},
-      eprint={2305.xxxxx},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV}
-      }
+@article{jiang2023clip,
+  title={CLIP-Count: Towards Text-Guided Zero-Shot Object Counting},
+  author={Jiang, Ruixiang and Liu, Lingbo and Chen, Changwen},
+  journal={arXiv preprint arXiv:2305.07304},
+  year={2023}
+}
 
 ```
