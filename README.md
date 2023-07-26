@@ -1,9 +1,13 @@
-# CLIP-Count
+# CLIP-Count: Towards Text-Guided Zero-Shot Object Counting
 
-Official Implementation for CLIP-Count: Towards Text-Guided Zero-Shot Object Counting
+Official Implementation for ACM Multimedia 23 paper CLIP-Count: Towards Text-Guided Zero-Shot Object Counting
 teaser image.
 ![teaser](asset/teaser.png)
+
 TL;DR: We count anything with text descriptions.
+
+**Update**
+🔥🔥🔥 [Jul 26] Our paper is accepted by ACM Multimedia 2023.
 ## Code
 To be released soon.
 
