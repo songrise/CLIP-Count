@@ -1,12 +1,17 @@
 # CLIP-Count: Towards Text-Guided Zero-Shot Object Counting
 
-Official Implementation for ACM Multimedia 23 paper CLIP-Count: Towards Text-Guided Zero-Shot Object Counting. Paper at: [arXiv](https://arxiv.org/abs/2305.07304)
+
 ![teaser](asset/teaser_CLIP_Count.png)
 
+Official Implementation for ACM Multimedia 2023 paper CLIP-Count: Towards Text-Guided Zero-Shot Object Counting. Paper at: [arXiv](https://arxiv.org/abs/2305.07304).
 TL;DR: We count anything with text descriptions.
 
 **Update**
-🔥🔥🔥 [Jul 26] Our paper is accepted by ACM Multimedia 2023.
+
+
+🔥🔥🔥 [Jul 26] Our paper is accepted by ACM Multimedia 2023.  
+
+🔥🔥🔥 [Aug 12] The code and pretrained model is released.
 ## Preparation
 
 **Environment:** Create a virtural environment use Anaconda, and install all dependencies.
@@ -42,13 +47,14 @@ data
 ```
 
 ## Run the Code
-**Train** you can train the model using the following command. For first time you run the code, the forzen CLIP weight would be downloaded. 
+📘 **Train**. you can train the model using the following command. For first time you run the code, the forzen CLIP weight would be downloaded. 
 ```
 CUDA_VISIBLE_DEVICES=0 python run.py --mode train --exp_name exp --batch_size 32
 ```
 Notice that the MAE logged during training is lower than the testing time, this is because training image is cropped from the whole image, while testing time sliding windows algorithm is applied.
 
-**Evaluation** Test the performance of trained ckpt with following command. You can change the `--dataset_type` parameter to test on different datasets.
+---
+🧰 **Evaluation**. Test the performance of trained ckpt with following command. You can change the `--dataset_type` parameter to test on different datasets.
 ```
 CUDA_VISIBLE_DEVICES=0 python run.py --mode test --exp_name exp --batch_size 32 --dataset_type FSC --ckpt path/to/model.ckpt
 ```
@@ -62,7 +68,9 @@ We provide a [pre-trained ckpt](https://drive.google.com/file/d/17Dj0tjd29lPGOGY
 |------------|-------------|------------|-------------|
 | 197.47     | 319.75      | 47.92      | 80.48       |
 
-**Interactive Web App** We provide a user-friendly interface to let you interact with CLIP-Count. You can start a web app using following command:
+---
+
+💻 **Interactive Web App**. We provide a user-friendly interface to let you interact with CLIP-Count. You can start a web app using following command:
 
 ```
 CUDA_VISIBLE_DEVICES=0 python run.py --mode app --exp_name exp --batch_size 32 --ckpt path/to/model.ckpt
