@@ -27,7 +27,7 @@ pip install git+https://github.com/openai/CLIP.git
 ```
 **Data:** We conduct experiments over three datasets, you can downloaded and use whichever you would like to test.
 The three dataset could be downloaded at: [FSC-147](https://github.com/cvlab-stonybrook/LearningToCountEverything) | [CARPK](https://lafi.github.io/LPN/) | [ShanghaiTech](https://www.kaggle.com/datasets/tthien/shanghaitech).
-Notice that you have to download the annoations of FSC-147 separately from their repo.
+Notice that you have to download the annoations of FSC-147 separately from [their repo](https://github.com/cvlab-stonybrook/LearningToCountEverything/tree/master/data).
 
 Extract and put the downloaded data in the `data/` dir. The complete file structure should look like this. You don't have to download all the dataset for evaluation, but you must have FSC-147 if you want to train the model.
 ```
@@ -38,7 +38,6 @@ data
 │  ├─ImageSets/
 │
 ├─FSC/    
-│  │ 
 │  ├─gt_density_map_adaptive_384_VarV2/
 │  ├─images_384_VarV2/
 │  ├─FSC_147/
@@ -94,6 +93,7 @@ The interface would look like this. You can upload images and input prompts to t
 
 
 ## Citation
+Consider cite us if you find our paper is useful in your research :).
 ```
 @article{jiang2023clip,
   title={CLIP-Count: Towards Text-Guided Zero-Shot Object Counting},
