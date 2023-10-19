@@ -1,10 +1,13 @@
 # CLIP-Count: Towards Text-Guided Zero-Shot Object Counting
+## [Paper (ArXiv)](https://arxiv.org/abs/2305.07304) | [Video](https://youtu.be/GzFc5j2Uufw)
 
 
 ![teaser](asset/teaser_CLIP_Count.png)
 
-Official Implementation for ACM Multimedia 2023 paper CLIP-Count: Towards Text-Guided Zero-Shot Object Counting. Paper at: [arXiv](https://arxiv.org/abs/2305.07304).
-TL;DR: We count anything with text descriptions.
+Official Implementation for ACM Multimedia 2023 paper CLIP-Count: Towards Text-Guided Zero-Shot Object Counting. 
+
+
+**TL;DR: We count anything with text descriptions.**
 
 **Update**
 
@@ -25,7 +28,7 @@ pip install -r requirements.txt
 pip install ftfy regex tqdm
 pip install git+https://github.com/openai/CLIP.git
 ```
-**Data:** We conduct experiments over three datasets, you can downloaded and use whichever you would like to test.
+**Data:** We conduct experiments over three datasets, you can download and use whichever you would like to test.
 The three dataset could be downloaded at: [FSC-147](https://github.com/cvlab-stonybrook/LearningToCountEverything) | [CARPK](https://lafi.github.io/LPN/) | [ShanghaiTech](https://www.kaggle.com/datasets/tthien/shanghaitech).
 Notice that you have to download the annoations of FSC-147 separately from [their repo](https://github.com/cvlab-stonybrook/LearningToCountEverything/tree/master/data).
 
