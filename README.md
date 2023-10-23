@@ -94,7 +94,8 @@ The interface would look like this. You can upload images and input prompts to t
 
 ![app](asset/web_app.png)
 
-
+## Gallery
+![more](asset/qual.png)
 ## Citation
 Consider cite us if you find our paper is useful in your research :).
 ```
