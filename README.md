@@ -108,6 +108,6 @@ Consider cite us if you find our paper is useful in your research :).
 
 ```
 
-## Acknoledgement
+## Acknowledgement
 
 This project is based on implementation from [CounTR](https://github.com/Verg-Avesta/CounTR).
